@@ -1,0 +1,17 @@
+services:
+  attendance-bot:
+    build: .
+    container_name: attendance-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Tashkent
+    volumes:
+      # Ma'lumotlar bazasi va tabellar konteyner o'chsa ham saqlanib qoladi
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

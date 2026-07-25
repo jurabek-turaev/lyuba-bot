@@ -1,0 +1,128 @@
+from aiogram import Router, types, F
+from aiogram.fsm.context import FSMContext
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+
+import database as db
+from services import worktime, telegram_group
+from .states import AttendanceState, reset_keep_branch
+
+router = Router()
+router.message.filter(F.chat.type == "private")
+
+
+def get_location_request_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📍 Joylashuvni yuborish", request_location=True)]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+# ===========================
+# Keldim — bosilgach, joylashuvni avtomatik so'raydi
+# ===========================
+@router.message(F.text == "📍 Keldim")
+async def ask_location_for_check_in(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+
+    name = data.get("name")
+    branch = data.get("chosen_branch")
+    video_id = data.get("video_id")
+
+    if not (name and branch and video_id):
+        await message.answer(
+            "⚠️ Avval video yuborishingiz kerak.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await reset_keep_branch(state)
+        return
+
+    if await db.get_open_attendance_id(message.from_user.id):
+        await message.answer("⚠️ Siz allaqachon 'Keldim' deb belgilagansiz.")
+        return
+
+    await state.update_data(pending_action="checkin")
+    await state.set_state(AttendanceState.waiting_for_location)
+    await message.answer(
+        "📍 Quyidagi tugma orqali joylashuvingizni yuboring:",
+        reply_markup=get_location_request_keyboard(),
+    )
+
+
+# ===========================
+# Ketdim — bosilgach, joylashuvni avtomatik so'raydi
+# ===========================
+@router.message(F.text == "📍 Ketdim")
+async def ask_location_for_check_out(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    open_id = data.get("open_attendance_id")
+
+    if not open_id:
+        await message.answer(
+            "⚠️ Sizda ochiq 'Keldim' yozuvi topilmadi.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await reset_keep_branch(state)
+        return
+
+    await state.update_data(pending_action="checkout")
+    await state.set_state(AttendanceState.waiting_for_location)
+    await message.answer(
+        "📍 Quyidagi tugma orqali joylashuvingizni yuboring:",
+        reply_markup=get_location_request_keyboard(),
+    )
+
+
+# ===========================
+# Yakunlash funksiyalari — handlers/location.py dagi handle_location chaqiradi
+# (masofa allaqachon tekshirilgan va ruxsat etilgan chegarada)
+# ===========================
+async def finalize_check_in(message: types.Message, state: FSMContext, distance: int):
+    data = await state.get_data()
+    name = data.get("name")
+    branch = data.get("chosen_branch")
+
+    user_id = message.from_user.id
+    work_date = db.today_str()
+
+    if await db.get_open_attendance_id(user_id):
+        await message.answer(
+            "⚠️ Siz allaqachon 'Keldim' deb belgilagansiz.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await reset_keep_branch(state)
+        return
+
+    await db.create_check_in(user_id, name, branch, distance, work_date)
+
+    time_str = message.date.strftime("%d.%m.%Y %H:%M:%S")
+    await telegram_group.send_check_in(message.bot, name, branch, distance, time_str)
+
+    await message.answer(
+        f"✅ {branch} hududida tasdiqlandi. Kelganingiz qayd etildi.\n"
+        "Ishni yakunlaganingizda qayta video yuboring.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await reset_keep_branch(state)
+
+
+async def finalize_check_out(message: types.Message, state: FSMContext, distance: int):
+    data = await state.get_data()
+    name = data.get("name")
+    branch = data.get("chosen_branch")
+    open_id = data.get("open_attendance_id")
+
+    check_out_time = await db.create_check_out(open_id, distance)
+    check_in_time, _ = await db.get_attendance_times(open_id)
+    hours = worktime.calculate_hours(check_in_time, check_out_time)
+    await db.save_work_hours(open_id, hours)
+
+    time_str = message.date.strftime("%d.%m.%Y %H:%M:%S")
+    await telegram_group.send_check_out(message.bot, name, branch, distance, time_str, hours)
+
+    await message.answer(
+        f"✅ {branch} hududida tasdiqlandi. Ketganingiz qayd etildi.\n"
+        f"Bugungi ish vaqtingiz: {hours} soat. Rahmat!",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await reset_keep_branch(state)

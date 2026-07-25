@@ -1,0 +1,25 @@
+# Docker image ichiga tushmasligi kerak bo'lgan fayllar
+.env
+.env.example
+.git/
+.gitignore
+.dockerignore
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Mahalliy ma'lumotlar bazasi va tabellar (server o'zi yaratadi/volume'da saqlaydi)
+data/*.db
+data/tables/*.xlsx
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+.claude/
+README.md

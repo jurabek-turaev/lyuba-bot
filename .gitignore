@@ -1,0 +1,23 @@
+# Maxfiy sozlamalar — HECH QACHON git'ga tushmasin
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Ma'lumotlar bazasi va generatsiya qilingan tabellar
+data/*.db
+data/tables/*.xlsx
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Loglar
+*.log
