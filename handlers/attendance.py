@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
@@ -95,7 +97,9 @@ async def finalize_check_in(message: types.Message, state: FSMContext, distance:
 
     await db.create_check_in(user_id, name, branch, distance, work_date)
 
-    time_str = message.date.strftime("%d.%m.%Y %H:%M:%S")
+    # Mahalliy (server TZ) vaqti — bazaga yoziladigan datetime.now() bilan izchil.
+    # message.date ishlatilmaydi, chunki u Telegram bergan UTC vaqti bo'ladi.
+    time_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     await telegram_group.send_check_in(message.bot, name, branch, distance, time_str)
 
     await message.answer(
@@ -117,7 +121,8 @@ async def finalize_check_out(message: types.Message, state: FSMContext, distance
     hours = worktime.calculate_hours(check_in_time, check_out_time)
     await db.save_work_hours(open_id, hours)
 
-    time_str = message.date.strftime("%d.%m.%Y %H:%M:%S")
+    # Mahalliy (server TZ) vaqti — bazadagi datetime.now() bilan izchil.
+    time_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     await telegram_group.send_check_out(message.bot, name, branch, distance, time_str, hours)
 
     await message.answer(
