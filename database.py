@@ -4,6 +4,12 @@ from datetime import datetime, date
 DB_PATH = "data/attendance.db"
 
 
+async def _column_exists(db, table: str, column: str) -> bool:
+    cursor = await db.execute(f"PRAGMA table_info({table})")
+    columns = [row[1] for row in await cursor.fetchall()]
+    return column in columns
+
+
 async def init_db():
     """Bot ishga tushganda bir marta chaqiriladi (bot.py da)."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -12,7 +18,8 @@ async def init_db():
                 user_id INTEGER PRIMARY KEY,
                 full_name TEXT,
                 username TEXT,
-                department TEXT
+                department TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1
             )
         """)
         await db.execute("""
@@ -28,9 +35,18 @@ async def init_db():
                 check_out_distance INTEGER,
                 work_hours REAL,
                 auto_closed INTEGER DEFAULT 0,
-                checkout_requested_at TEXT
+                checkout_requested_at TEXT,
+                archived INTEGER NOT NULL DEFAULT 0
             )
         """)
+
+        # --- Migratsiya: eski bazaga yangi ustunlarni qo'shish (buzmasdan) ---
+        # Botning oldingi versiyasidan qolgan baza uchun kerak.
+        if not await _column_exists(db, "employees", "is_active"):
+            await db.execute("ALTER TABLE employees ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+        if not await _column_exists(db, "attendance", "archived"):
+            await db.execute("ALTER TABLE attendance ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+
         await db.commit()
 
 
@@ -230,6 +246,11 @@ async def get_month_attendance(year: int, month: int):
     """
     Berilgan oy uchun barcha davomat yozuvlarini xodim ma'lumotlari (jumladan
     lavozim/bo'lim) bilan birga qaytaradi — services/excel.py shundan tabel yasaydi.
+
+    Arxivlangan (archived=1) yozuvlar ham kiritiladi, chunki bu funksiya oylik
+    arxivlash jarayonida oy TO'LIQ arxivlanishidan oldin ham, keyin ham chaqirilishi
+    mumkin. Kundalik /tabel joriy (arxivlanmagan) oyni so'raydi — u yozuvlar baribir
+    archived=0 bo'ladi, shuning uchun natija bir xil.
     """
     month_prefix = f"{year:04d}-{month:02d}"
     async with aiosqlite.connect(DB_PATH) as db:
@@ -242,3 +263,86 @@ async def get_month_attendance(year: int, month: int):
             (f"{month_prefix}%",),
         )
         return await cursor.fetchall()
+
+
+# ===========================
+# Xodimlarni boshqarish (faollik / soft-delete)
+# ===========================
+async def is_employee_active(user_id: int) -> bool:
+    """
+    Xodim faolmi? Ro'yxatda yo'q (yangi) bo'lsa ham faol hisoblanadi —
+    faqat qasddan o'chirilgan (is_active=0) xodimlargina bloklanadi.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT is_active FROM employees WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return True  # hali ro'yxatdan o'tmagan — botga kirishiga ruxsat
+        return row[0] == 1
+
+
+async def get_active_employees():
+    """Faol (is_active=1) xodimlar ro'yxati — /hodimlar uchun."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT user_id, full_name, department
+               FROM employees
+               WHERE is_active = 1
+               ORDER BY full_name"""
+        )
+        return await cursor.fetchall()
+
+
+async def get_employee_short(user_id: int):
+    """Bitta xodimning qisqa ma'lumoti (tasdiqlash oynasi uchun)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT full_name, department, is_active FROM employees WHERE user_id = ?",
+            (user_id,),
+        )
+        return await cursor.fetchone()
+
+
+async def deactivate_employee(user_id: int):
+    """
+    Xodimni 'ishdan ketgan' deb belgilaydi (soft-delete). Ma'lumotlari va
+    davomat tarixi O'CHIRILMAYDI — faqat botga kirishi bloklanadi va u
+    xodimlar ro'yxatidan chiqadi. Faqat OWNER_ID chaqiradi.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE employees SET is_active = 0 WHERE user_id = ?", (user_id,)
+        )
+        await db.commit()
+
+
+# ===========================
+# Oylik arxivlash
+# ===========================
+async def count_unarchived_in_month(year: int, month: int) -> int:
+    """Berilgan oyda hali arxivlanmagan yozuvlar soni — ikki marta arxivlamaslik uchun."""
+    month_prefix = f"{year:04d}-{month:02d}"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM attendance WHERE work_date LIKE ? AND archived = 0",
+            (f"{month_prefix}%",),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def archive_month(year: int, month: int) -> int:
+    """
+    Berilgan oyning barcha yozuvlarini archived=1 qiladi (o'CHIRMAYDI).
+    Arxivlangan yozuvlar soni qaytariladi.
+    """
+    month_prefix = f"{year:04d}-{month:02d}"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE attendance SET archived = 1 WHERE work_date LIKE ? AND archived = 0",
+            (f"{month_prefix}%",),
+        )
+        await db.commit()
+        return cursor.rowcount

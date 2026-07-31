@@ -12,6 +12,7 @@ env/
 # Ma'lumotlar bazasi va generatsiya qilingan tabellar
 data/*.db
 data/tables/*.xlsx
+data/.last_monthly_report
 
 # IDE / OS
 .vscode/

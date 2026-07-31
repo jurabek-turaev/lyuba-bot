@@ -12,6 +12,35 @@ video tasdig'i bilan qayd qiluvchi tizim. Oy oxirida `/tabel` orqali Excel hisob
 - Tungi smenani to'g'ri hisoblash (kun chegarasidan o'tsa ham)
 - "Ketdim" bosilmasa — smenani avtomatik yopish (auto-close)
 - Oylik Excel tabel (`/tabel` — faqat bot egasiga)
+- Xodimni ishdan chiqarish — `/hodimlar` (soft-delete: tarix saqlanadi, bot bloklaydi)
+- Har oy 1-sanasi 00:30 da o'tgan oy tabeli avtomatik egasiga yuboriladi va arxivlanadi
+
+## Egasi (OWNER_ID) uchun buyruqlar
+
+| Buyruq | Vazifa |
+|--------|--------|
+| `/tabel` | Joriy oy tabelini Excel qilib oladi |
+| `/hodimlar` | Faol xodimlar ro'yxati — tugma orqali ishdan chiqarish |
+| `/bolim_ozgartir [ID]` | O'zining yoki ko'rsatilgan xodimning bo'limini tozalaydi |
+
+## Xodimni ishdan chiqarish haqida
+
+`/hodimlar` orqali chiqarilgan xodim:
+- Botdan bloklanadi — bot unga umuman javob bermaydi (jim).
+- Faol xodimlar ro'yxatidan chiqadi.
+- Lekin uning **davomat tarixi bazada saqlanadi** — hisobotlar buzilmaydi.
+- Joriy oy tabelida u oy oxirigacha ko'rinadi (ishlagan kunlari adolatli hisobga olinadi).
+
+## Oylik avtomatik arxivlash haqida
+
+Har oyning 1-sanasi 00:30 da bot:
+1. O'tgan oy tabelini Excel qilib egasiga (OWNER_ID) yuboradi.
+2. O'sha oy yozuvlarini **arxivlaydi** (o'chirmaydi — `archived=1` belgisi qo'yiladi).
+
+Arxivlangan data yo'qolmaydi: ishdan ketgan xodimning eski ma'lumoti kerak bo'lsa,
+bazada saqlanib turadi. Kundalik tizim faqat joriy (arxivlanmagan) oy bilan ishlagani
+uchun toza va yengil qoladi. Agar bot 1-sanasi 00:30 da o'chiq bo'lsa, keyingi ishga
+tushishida bu ish avtomatik bajariladi (har oy uchun faqat bir marta).
 
 ---
 
