@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from config import SAVDO_BRANCHES, FIXED_DEPARTMENTS
 import database as db
 
+
 router = Router()
 router.message.filter(F.chat.type == "private")
 
