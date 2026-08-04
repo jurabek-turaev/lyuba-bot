@@ -44,7 +44,6 @@ async def send_check_out(bot: Bot, name: str, branch: str, distance: int, time_s
             f"📍 Holat: Ketdi\n"
             f"📏 Masofa: {distance} metr\n"
             f"🕒 Vaqt: {time_str}\n"
-            f"⏱ Ishlagan vaqt: {hours} soat"
         ),
     )
 
@@ -59,6 +58,5 @@ async def send_auto_close(bot: Bot, name: str, branch: str, time_str: str, hours
             f"🏢 Filial: {branch}\n"
             f"📍 Holat: Ketdim bosilmadi — maksimal smena vaqti tugagani uchun tizim tomonidan yopildi\n"
             f"🕒 Yopilgan vaqt: {time_str}\n"
-            f"⏱ Ishlagan vaqt: {hours} soat"
         ),
     )
