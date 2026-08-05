@@ -126,8 +126,7 @@ async def finalize_check_out(message: types.Message, state: FSMContext, distance
     await telegram_group.send_check_out(message.bot, name, branch, distance, time_str, hours)
 
     await message.answer(
-        f"✅ {branch} hududida tasdiqlandi. Ketganingiz qayd etildi.\n"
-        f"Bugungi ish vaqtingiz: {hours} soat. Rahmat!",
+        f"✅ {branch} hududida tasdiqlandi. Ketganingiz qayd etildi. Rahmat!",
         reply_markup=ReplyKeyboardRemove(),
     )
     await reset_keep_branch(state)
