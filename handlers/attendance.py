@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 
 from aiogram import Router, types, F
@@ -7,6 +8,8 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 import database as db
 from services import worktime, telegram_group
 from .states import AttendanceState, reset_keep_branch
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 router.message.filter(F.chat.type == "private")
@@ -100,7 +103,13 @@ async def finalize_check_in(message: types.Message, state: FSMContext, distance:
     # Mahalliy (server TZ) vaqti — bazaga yoziladigan datetime.now() bilan izchil.
     # message.date ishlatilmaydi, chunki u Telegram bergan UTC vaqti bo'ladi.
     time_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-    await telegram_group.send_check_in(message.bot, name, branch, distance, time_str)
+    # Guruhga xabar yuborish timeout'da yiqilsa ham, baza allaqachon yozilgan —
+    # xodimga tasdiq berish va FSM'ni tozalash BLOKLANMASLIGI kerak. Aks holda
+    # xodim tasdiq olmay qayta video yuboradi va holatlar chalkashadi.
+    try:
+        await telegram_group.send_check_in(message.bot, name, branch, distance, time_str)
+    except Exception:
+        logger.exception("Guruhga 'Keldi' xabarini yuborib bo'lmadi (branch=%s)", branch)
 
     await message.answer(
         f"✅ {branch} hududida tasdiqlandi. Kelganingiz qayd etildi.\n"
@@ -123,7 +132,12 @@ async def finalize_check_out(message: types.Message, state: FSMContext, distance
 
     # Mahalliy (server TZ) vaqti — bazadagi datetime.now() bilan izchil.
     time_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-    await telegram_group.send_check_out(message.bot, name, branch, distance, time_str, hours)
+    # Guruhga xabar timeout'da yiqilsa ham, chiqish allaqachon bazaga yozilgan —
+    # xodimga tasdiq berish va FSM'ni tozalash BLOKLANMASLIGI kerak.
+    try:
+        await telegram_group.send_check_out(message.bot, name, branch, distance, time_str, hours)
+    except Exception:
+        logger.exception("Guruhga 'Ketdi' xabarini yuborib bo'lmadi (branch=%s)", branch)
 
     await message.answer(
         f"✅ {branch} hududida tasdiqlandi. Ketganingiz qayd etildi. Rahmat!",

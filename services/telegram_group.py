@@ -2,6 +2,11 @@ from aiogram import Bot
 
 from config import GROUP_ID, WORK_LOCATIONS
 
+# Guruhga yuborishda Telegram API ba'zan tarmoq muammosi sababli uzoq osilib
+# qoladi. Aniq (qisqa) timeout berib, uzun osilishlarning oldini olamiz —
+# xato bo'lsa chaqiruvchi tomon uni ushlab, oqimni davom ettiradi.
+_REQUEST_TIMEOUT = 15
+
 
 def _group_id_for_branch(branch: str) -> int:
     """
@@ -17,7 +22,9 @@ def _group_id_for_branch(branch: str) -> int:
 async def send_video(bot: Bot, branch: str, video_id: str):
     """Dumaloq video kelgan zahoti, shu filialga tegishli guruhga yuboriladi."""
     group_id = _group_id_for_branch(branch)
-    await bot.send_video_note(chat_id=group_id, video_note=video_id)
+    await bot.send_video_note(
+        chat_id=group_id, video_note=video_id, request_timeout=_REQUEST_TIMEOUT
+    )
 
 
 async def send_check_in(bot: Bot, name: str, branch: str, distance: int, time_str: str):
@@ -31,6 +38,7 @@ async def send_check_in(bot: Bot, name: str, branch: str, distance: int, time_st
             f"📏 Masofa: {distance} metr\n"
             f"🕒 Vaqt: {time_str}"
         ),
+        request_timeout=_REQUEST_TIMEOUT,
     )
 
 
@@ -45,6 +53,7 @@ async def send_check_out(bot: Bot, name: str, branch: str, distance: int, time_s
             f"📏 Masofa: {distance} metr\n"
             f"🕒 Vaqt: {time_str}\n"
         ),
+        request_timeout=_REQUEST_TIMEOUT,
     )
 
 
@@ -59,4 +68,5 @@ async def send_auto_close(bot: Bot, name: str, branch: str, time_str: str, hours
             f"📍 Holat: Ketdim bosilmadi — maksimal smena vaqti tugagani uchun tizim tomonidan yopildi\n"
             f"🕒 Yopilgan vaqt: {time_str}\n"
         ),
+        request_timeout=_REQUEST_TIMEOUT,
     )

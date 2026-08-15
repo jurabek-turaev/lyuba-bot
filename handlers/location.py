@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from collections import defaultdict
 
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
@@ -17,6 +19,14 @@ router.message.filter(F.chat.type == "private")
 
 MIN_NAME_LEN = 3
 MAX_NAME_LEN = 100
+
+# Har bir foydalanuvchi uchun alohida qulf (lock). Xodim internet sekinligi
+# sababli 2-3 ta videoni ketma-ket yuborsa, ular Telegram tomonda navbatga
+# yig'ilib, tarmoq tiklangach BIRDANIGA botga yetib keladi. Qulfsiz holda ular
+# parallel ishlanib, biri "Keldim", boshqasi "Ketdim" oqimiga tushib holatlarni
+# aralashtirib yuboradi (kelish/ketish bir kunda chalkashadi). Qulf har bir
+# xodim uchun oqimni ketma-ket (bittalab) bajarilishini kafolatlaydi.
+_user_video_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 # ===========================
@@ -78,6 +88,26 @@ async def show_attendance_choice(message: types.Message, state: FSMContext, user
 # ===========================
 @router.message(F.content_type == ContentType.VIDEO_NOTE)
 async def handle_video(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    lock = _user_video_locks[user_id]
+
+    # Agar oldingi video hali ishlanayotgan bo'lsa (masalan xodim internet
+    # sekinligi sababli 2-3 tasini birdan yuborgan), yangisini rad etamiz.
+    # Aks holda bir video "Keldim", boshqasi "Ketdim" oqimiga tushib holatni
+    # aralashtirib yuboradi. Xodim javobni kutib, keyin qayta yuboradi.
+    if lock.locked():
+        logger.info("Video e'tiborsiz qoldirildi — oldingisi hali ishlanmoqda (user_id=%s)", user_id)
+        await message.answer(
+            "⏳ Oldingi videongiz hali qayta ishlanmoqda. "
+            "Iltimos, bir oz kuting va javobni oling."
+        )
+        return
+
+    async with lock:
+        await _process_video(message, state)
+
+
+async def _process_video(message: types.Message, state: FSMContext):
     data = await state.get_data()
     branch_name = data.get("chosen_branch")
 
@@ -87,13 +117,13 @@ async def handle_video(message: types.Message, state: FSMContext):
 
     await state.update_data(video_id=message.video_note.file_id)
 
-    # Video darhol belgilangan guruhga yuboriladi.
-    # Guruhga yuborib bo'lmasa ham (bot guruhdan chiqarilgan va h.k.), xodimning
-    # jarayoni to'xtab qolmasligi kerak — shuning uchun xatoni ushlab, loglaymiz.
-    try:
-        await telegram_group.send_video(message.bot, branch_name, message.video_note.file_id)
-    except Exception:
-        logger.exception("Guruhga video yuborib bo'lmadi (branch=%s)", branch_name)
+    # Video guruhga fon vazifasi sifatida yuboriladi — Telegram API timeout'da
+    # 30+ soniya osilib qolsa ham xodimning oqimi (keldi/ketdi) BLOKLANMAYDI.
+    # Guruhga yuborib bo'lmasa (bot guruhdan chiqarilgan, tarmoq timeout va h.k.),
+    # xatoni ushlab loglaymiz.
+    asyncio.create_task(
+        _send_video_to_group(message.bot, branch_name, message.video_note.file_id)
+    )
 
     existing_name = await db.get_employee_name(message.from_user.id)
 
@@ -108,6 +138,13 @@ async def handle_video(message: types.Message, state: FSMContext):
         await state.update_data(name=existing_name)
         await message.answer(f"✅ Video qabul qilindi, {existing_name}.")
         await show_attendance_choice(message, state, message.from_user.id)
+
+
+async def _send_video_to_group(bot, branch_name: str, video_id: str):
+    try:
+        await telegram_group.send_video(bot, branch_name, video_id)
+    except Exception:
+        logger.exception("Guruhga video yuborib bo'lmadi (branch=%s)", branch_name)
 
 
 # ===========================
