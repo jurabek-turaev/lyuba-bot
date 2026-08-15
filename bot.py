@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from config import BOT_TOKEN
 from database import init_db
@@ -10,6 +11,12 @@ from services.auto_close import auto_close_loop
 from services.monthly_report import monthly_report_loop
 
 logger = logging.getLogger(__name__)
+
+# VPS (OVH) ↔ Telegram ulanishi ba'zan bir necha soniyaga uziladi. Sukut
+# bo'yicha timeout'ni biroz oshiramiz — shunda qisqa uzilishlarda so'rov darhol
+# yiqilmay, ulanish tiklanguncha kutib turadi. Bu ayniqsa xodimga javob berish
+# (message.answer) uchun muhim: aks holda bot "javob bermayotgan" ko'rinadi.
+_SESSION_TIMEOUT = 60
 
 
 def setup_logging():
@@ -27,7 +34,8 @@ async def main():
     # Baza jadvallarini yaratish (agar mavjud bo'lmasa)
     await init_db()
 
-    bot = Bot(token=BOT_TOKEN)
+    session = AiohttpSession(timeout=_SESSION_TIMEOUT)
+    bot = Bot(token=BOT_TOKEN, session=session)
     dp = Dispatcher()
     dp.include_router(main_router)
 
