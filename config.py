@@ -32,6 +32,7 @@ if not BOT_TOKEN:
 
 OWNER_ID = _get_int("OWNER_ID")            # bot egasining Telegram ID'si
 GROUP_ID = _get_int("GROUP_ID")            # savdo uchun umumiy guruh ID'si
+DEVELOPER_ID = _get_int("DEVELOPER_ID")
 
 MAX_DISTANCE = _get_int("MAX_DISTANCE")    # ruxsat etilgan maksimal masofa (metr)
 MAX_SHIFT_HOURS = _get_int("MAX_SHIFT_HOURS")  # maksimal smena davomiyligi (soat)

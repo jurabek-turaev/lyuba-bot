@@ -6,7 +6,7 @@ from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import ContentType, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-from config import WORK_LOCATIONS, MAX_DISTANCE
+from config import WORK_LOCATIONS, MAX_DISTANCE, DEVELOPER_ID
 import database as db
 from services import gps, telegram_group
 from .states import AttendanceState, reset_keep_branch
@@ -183,6 +183,24 @@ async def get_name(message: types.Message, state: FSMContext):
     F.content_type == ContentType.LOCATION,
 )
 async def handle_location(message: types.Message, state: FSMContext):
+    if message.forward_date or message.forward_from:
+        await message.answer(
+            "⚠️ Lokatsiyani boshqa joydan forward (uzatish) qilish taqiqlanadi!\n"
+            "Iltimos, o'ziningizning <b>Joriy lokatsiyangizni</b> yuboring.",
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="HTML",
+        )
+        return
+    if not message.location.live_period:
+        await message.answer(
+            "⚠️ Iltimos, statik lokatsiya yubormang!\n"
+            "Tugmani bosgach, <b>'Jonli lokatsiyani ulashish' (Share My Live Location)</b> opsiyasini tanlab yuboring.",
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="HTML",
+        )
+        return
+
+    
     user_loc = (message.location.latitude, message.location.longitude)
     data = await state.get_data()
 
@@ -200,7 +218,7 @@ async def handle_location(message: types.Message, state: FSMContext):
     target = WORK_LOCATIONS[branch_name]
     dist = gps.distance_to_branch(user_loc, target)
 
-    if dist > MAX_DISTANCE:
+    if dist > MAX_DISTANCE and message.from_user.id != DEVELOPER_ID:
         await message.answer(
             f"❌ Siz {branch_name} hududida emassiz.\n\n"
             f"📏 Masofa: {int(dist)} metr.\n\n"

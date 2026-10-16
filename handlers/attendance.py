@@ -49,8 +49,12 @@ async def ask_location_for_check_in(message: types.Message, state: FSMContext):
     await state.update_data(pending_action="checkin")
     await state.set_state(AttendanceState.waiting_for_location)
     await message.answer(
-        "📍 Quyidagi tugma orqali joylashuvingizni yuboring:",
-        reply_markup=get_location_request_keyboard(),
+        "📍 <b>Jonli lokatsiya yuborish talab qilinadi!</b>\n\n"
+        "Iltimos, pastdagi skrepka (📎) belgisini bosing ➔ <b>Location</b> (Joylashuv) bo'limiga kiring ➔ "
+        "<b>'Share My Live Location' (Jonli lokatsiyani ulashish)</b> tugmasini bosib yuboring.\n\n"
+        "<i>⚠️ Statik (oddiy) yoki oldindan saqlangan lokatsiyalar qabul qilinmaydi!</i>",
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="HTML"
     )
 
 
@@ -73,8 +77,12 @@ async def ask_location_for_check_out(message: types.Message, state: FSMContext):
     await state.update_data(pending_action="checkout")
     await state.set_state(AttendanceState.waiting_for_location)
     await message.answer(
-        "📍 Quyidagi tugma orqali joylashuvingizni yuboring:",
-        reply_markup=get_location_request_keyboard(),
+        "📍 <b>Jonli lokatsiya yuborish talab qilinadi!</b>\n\n"
+        "Iltimos, pastdagi skrepka (📎) belgisini bosing ➔ <b>Location</b> (Joylashuv) bo'limiga kiring ➔ "
+        "<b>'Share My Live Location' (Jonli lokatsiyani ulashish)</b> tugmasini bosib yuboring.\n\n"
+        "<i>⚠️ Statik (oddiy) yoki oldindan saqlangan lokatsiyalar qabul qilinmaydi!</i>",
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="HTML"
     )
 
 

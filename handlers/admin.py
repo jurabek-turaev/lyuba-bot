@@ -12,6 +12,33 @@ from services import excel
 router = Router()
 router.message.filter(F.chat.type == "private")
 
+@router.message(Command("help"))
+async def send_help_message(message: types.Message):
+    """
+    Faqat OWNER_ID uchun barcha mavjud admin komandalari va ularning ishlatilishi haqida ma'lumot beradi.
+    """
+    if message.from_user.id != OWNER_ID:
+        return
+
+    help_text = (
+        "<b>📖 Botni boshqarish va foydalanish yo'riqnomasi</b>\n\n"
+        "Siz tizim egasi (Admin) bo'lganingiz uchun quyidagi komandalardan foydalanishingiz mumkin:\n\n"
+        
+        "📊 <b>/tabel</b>\n"
+        "└ Joriy oy uchun barcha xodimlarning davomat tabelini Excel formatida generatsiya qiladi va yuboradi.\n\n"
+        
+        "🏢 <b>/bolim_ozgartir</b>\n"
+        "└ O'zingizning bo'limingizni tozalaydi.\n"
+        "└ <code>/bolim_ozgartir 123456789</code> — ko'rsatilgan ID'ga ega xodimning bo'limini tozalaydi.\n"
+        "<i>(Bo'lim tozalangach, xodim /start bosganda bo'lim tanlash menyusi qayta chiqadi)</i>\n\n"
+        
+        "👥 <b>/hodimlar</b>\n"
+        "└ Hozirda faol bo'lgan barcha xodimlar ro'yxatini va ularning bo'limlarini chiqaradi.\n"
+        "└ Xodimni ro'yxatdan tanlab, uni botdan bloklash (ishdan chiqarish) imkonini beradi."
+    )
+
+    await message.answer(help_text, parse_mode="HTML")
+
 
 @router.message(Command("tabel"))
 async def send_current_month_tabel(message: types.Message):
