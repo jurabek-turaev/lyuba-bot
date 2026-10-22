@@ -46,6 +46,13 @@ async def init_db():
             await db.execute("ALTER TABLE employees ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
         if not await _column_exists(db, "attendance", "archived"):
             await db.execute("ALTER TABLE attendance ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+        # Work schedule and pay settings (set by the admin via /ish_vaqti_belgilash)
+        if not await _column_exists(db, "employees", "shift_start"):
+            await db.execute("ALTER TABLE employees ADD COLUMN shift_start TEXT")
+        if not await _column_exists(db, "employees", "shift_end"):
+            await db.execute("ALTER TABLE employees ADD COLUMN shift_end TEXT")
+        if not await _column_exists(db, "employees", "hourly_rate"):
+            await db.execute("ALTER TABLE employees ADD COLUMN hourly_rate INTEGER")
 
         await db.commit()
 
@@ -346,3 +353,61 @@ async def archive_month(year: int, month: int) -> int:
         )
         await db.commit()
         return cursor.rowcount
+
+
+# ===========================
+# Work schedule and pay settings
+# ===========================
+async def get_departments():
+    """Names of all departments that have at least one active employee."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT DISTINCT department FROM employees
+               WHERE is_active = 1 AND department IS NOT NULL AND department != ''
+               ORDER BY department"""
+        )
+        return [row[0] for row in await cursor.fetchall()]
+
+
+async def get_active_employees_by_department(department: str):
+    """Active employees of one department: (user_id, full_name, shift_start, shift_end)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT user_id, full_name, shift_start, shift_end
+               FROM employees
+               WHERE is_active = 1 AND department = ?
+               ORDER BY full_name""",
+            (department,),
+        )
+        return await cursor.fetchall()
+
+
+async def save_work_schedule(user_id: int, shift_start: str, shift_end: str, hourly_rate: int):
+    """
+    Save the employee's permanent daily schedule ("HH:MM" strings) and hourly rate.
+    Overwrites any previous values.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """UPDATE employees
+               SET shift_start = ?, shift_end = ?, hourly_rate = ?
+               WHERE user_id = ?""",
+            (shift_start, shift_end, hourly_rate, user_id),
+        )
+        await db.commit()
+
+
+async def get_pay_settings():
+    """
+    Schedule and hourly rate of every employee that has a schedule.
+    Inactive employees are included on purpose: their last month still has to be paid.
+    Returns {user_id: (shift_start, shift_end, hourly_rate)}.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT user_id, shift_start, shift_end, hourly_rate
+               FROM employees
+               WHERE shift_start IS NOT NULL AND shift_end IS NOT NULL"""
+        )
+        rows = await cursor.fetchall()
+    return {user_id: (start, end, rate) for user_id, start, end, rate in rows}

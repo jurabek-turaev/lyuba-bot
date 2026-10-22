@@ -34,7 +34,12 @@ async def send_help_message(message: types.Message):
         
         "👥 <b>/hodimlar</b>\n"
         "└ Hozirda faol bo'lgan barcha xodimlar ro'yxatini va ularning bo'limlarini chiqaradi.\n"
-        "└ Xodimni ro'yxatdan tanlab, uni botdan bloklash (ishdan chiqarish) imkonini beradi."
+        "└ Xodimni ro'yxatdan tanlab, uni botdan bloklash (ishdan chiqarish) imkonini beradi.\n\n"
+
+        "🕘 <b>/ish_vaqti_belgilash</b>\n"
+        "└ Xodimning doimiy ish vaqtini (norma) va soatlik stavkasini belgilaydi: "
+        "bo'lim → xodim → boshlanish va tugash vaqti → stavka → tasdiqlash.\n"
+        "└ Qayta bajarilsa, eski qiymatlar yangisi bilan almashtiriladi."
     )
 
     await message.answer(help_text, parse_mode="HTML")

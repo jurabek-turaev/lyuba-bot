@@ -13,13 +13,13 @@ env/
 data/*.db
 data/tables/*.xlsx
 data/.last_monthly_report
+data/test*.*
 
 # IDE / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-.claude/
 
 # Loglar
 *.log
