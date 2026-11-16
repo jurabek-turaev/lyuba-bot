@@ -10,7 +10,7 @@ class AttendanceState(StatesGroup):
 class ShiftState(StatesGroup):
     """Admin flow for setting an employee's work schedule and hourly rate."""
     choosing = State()        # inline-button steps: department, employee, time, confirmation
-    entering_rate = State()   # waiting for the hourly rate typed as a text message
+    entering_salary = State()  # waiting for the monthly salary typed as a text message
 
 
 async def reset_keep_branch(state: FSMContext):

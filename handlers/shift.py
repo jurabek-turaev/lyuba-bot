@@ -1,11 +1,11 @@
 """
-Admin flow for setting an employee's permanent work schedule and hourly rate.
+Admin flow for setting an employee's permanent work schedule and fixed monthly salary.
 
 Command: /ish_vaqti_belgilash (OWNER_ID only, private chat only)
 
 The whole flow lives in ONE message that is edited at every step:
     department -> employee -> start hour -> start minute
-    -> end hour -> end minute -> hourly rate (typed) -> confirmation
+    -> end hour -> end minute -> monthly salary (typed) -> confirmation
 
 Callback data format (always starts with "sh:"):
     sh:d:<index>          department (index into the list kept in FSM data)
@@ -23,7 +23,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import OWNER_ID
 import database as db
-from services.worktime import shift_hours
+from services.worktime import hourly_rate, shift_hours
 from .states import ShiftState
 
 router = Router()
@@ -33,8 +33,10 @@ router.callback_query.filter(F.from_user.id == OWNER_ID)
 HOURS_PER_ROW = 6
 MINUTE_STEP = 5
 MINUTES_PER_ROW = 3
-# Guards against typing a monthly salary instead of an hourly rate
-MAX_HOURLY_RATE = 1_000_000
+# Guards against typing an hourly rate (too small) or extra zeros (too big)
+# instead of a monthly salary
+MIN_MONTHLY_SALARY = 100_000
+MAX_MONTHLY_SALARY = 100_000_000
 
 # Where the "Back" button leads from each step
 PREVIOUS_STEP = {
@@ -43,8 +45,8 @@ PREVIOUS_STEP = {
     "sm": "sh",
     "eh": "sm",
     "em": "eh",
-    "rate": "em",
-    "confirm": "rate",
+    "salary": "em",
+    "confirm": "salary",
 }
 
 
@@ -72,8 +74,8 @@ def _hhmm(hour: int, minute: int) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
-def _money(amount: int) -> str:
-    return f"{amount:,}".replace(",", " ")
+def _money(amount: float, decimals: int = 0) -> str:
+    return f"{amount:,.{decimals}f}".replace(",", " ")
 
 
 def _hours_markup(kind: str) -> InlineKeyboardMarkup:
@@ -90,11 +92,13 @@ def _summary(data: dict) -> str:
     start = _hhmm(data["start_hour"], data["start_minute"])
     end = _hhmm(data["end_hour"], data["end_minute"])
     norm = shift_hours(start, end)
+    hourly = hourly_rate(data["salary"], norm)
     return (
         f"👤 <b>{escape(data['employee_name'])}</b>\n"
         f"🏢 {escape(data['department'])}\n"
         f"🕘 {start} – {end} (norma: {norm:g} soat/kun)\n"
-        f"💰 {_money(data['rate'])} so'm/soat"
+        f"💰 Oylik maosh: {_money(data['salary'])} so'm\n"
+        f"⏱ Soatlik stavka: {_money(hourly, 2)} so'm (oylik ÷ 26 ÷ kunlik norma)"
     )
 
 
@@ -152,11 +156,11 @@ async def build_step(step: str, data: dict):
         )
         return text, _minutes_markup("em")
 
-    if step == "rate":
+    if step == "salary":
         text = (
             f"💰 <b>{name}</b>\n\n"
-            "Soatlik stavkani so'mda yozib yuboring.\n"
-            "Masalan: <code>15000</code>"
+            "Belgilangan <b>oylik maosh</b>ni so'mda yozib yuboring.\n"
+            "Masalan: <code>5000000</code>"
         )
         return text, InlineKeyboardMarkup(inline_keyboard=[_nav_row()])
 
@@ -169,24 +173,37 @@ async def build_step(step: str, data: dict):
     return text, markup
 
 
-async def _edit_flow_message(bot: Bot, data: dict, text: str, markup=None) -> None:
+async def _edit_flow_message(bot: Bot, chat_id: int, message_id: int, text: str, markup=None) -> None:
     """Edit the single message that carries the whole flow."""
     await bot.edit_message_text(
         text=text,
-        chat_id=data["chat_id"],
-        message_id=data["message_id"],
+        chat_id=chat_id,
+        message_id=message_id,
         reply_markup=markup,
         parse_mode="HTML",
     )
 
 
-async def show_step(bot: Bot, state: FSMContext, step: str) -> None:
-    """Move the flow to the given step and redraw the flow message."""
+async def show_step(
+    bot: Bot,
+    state: FSMContext,
+    step: str,
+    message: types.Message | None = None,
+) -> None:
+    """
+    Move the flow to the given step and redraw the flow message.
+
+    message is the message that carries the pressed button. Its ids are saved,
+    so the flow never depends on ids stored earlier. The typed-salary step has no
+    button press, so it uses the ids saved by the previous step.
+    """
+    if message is not None:
+        await state.update_data(chat_id=message.chat.id, message_id=message.message_id)
     await state.update_data(step=step)
-    await state.set_state(ShiftState.entering_rate if step == "rate" else ShiftState.choosing)
+    await state.set_state(ShiftState.entering_salary if step == "salary" else ShiftState.choosing)
     data = await state.get_data()
     text, markup = await build_step(step, data)
-    await _edit_flow_message(bot, data, text, markup)
+    await _edit_flow_message(bot, data["chat_id"], data["message_id"], text, markup)
 
 
 # ===========================
@@ -219,7 +236,7 @@ async def on_department(callback: types.CallbackQuery, state: FSMContext, bot: B
         return
 
     await state.update_data(department=departments[index])
-    await show_step(bot, state, "emp")
+    await show_step(bot, state, "emp", callback.message)
     await callback.answer()
 
 
@@ -237,7 +254,7 @@ async def on_employee(callback: types.CallbackQuery, state: FSMContext, bot: Bot
         return
 
     await state.update_data(employee_id=user_id, employee_name=employee[0] or f"ID {user_id}")
-    await show_step(bot, state, "sh")
+    await show_step(bot, state, "sh", callback.message)
     await callback.answer()
 
 
@@ -271,28 +288,36 @@ async def on_time_part(callback: types.CallbackQuery, state: FSMContext, bot: Bo
             )
             return
         await state.update_data(end_minute=value)
-        next_step = "rate"
+        next_step = "salary"
 
-    await show_step(bot, state, next_step)
+    await show_step(bot, state, next_step, callback.message)
     await callback.answer()
 
 
-@router.message(StateFilter(ShiftState.entering_rate), F.text, ~F.text.startswith("/"))
-async def on_rate_text(message: types.Message, state: FSMContext, bot: Bot):
-    digits = "".join(message.text.split())  # "15 000" -> "15000"
+@router.message(StateFilter(ShiftState.entering_salary), F.text, ~F.text.startswith("/"))
+async def on_salary_text(message: types.Message, state: FSMContext, bot: Bot):
+    digits = "".join(message.text.split())  # "5 000 000" -> "5000000"
     if not (digits.isascii() and digits.isdigit()) or int(digits) <= 0:
-        await message.answer("⚠️ Faqat musbat butun son yozing.\nMasalan: 15000")
+        await message.answer("⚠️ Faqat musbat butun son yozing.\nMasalan: 5000000")
         return
 
-    rate = int(digits)
-    if rate > MAX_HOURLY_RATE:
+    salary = int(digits)
+    if salary < MIN_MONTHLY_SALARY:
         await message.answer(
-            f"⚠️ Soatlik stavka {_money(MAX_HOURLY_RATE)} so'mdan oshmasligi kerak.\n"
-            "Oylik maosh emas, soatlik stavkani kiriting."
+            f"⚠️ Oylik maosh {_money(MIN_MONTHLY_SALARY)} so'mdan kam bo'lmasligi kerak.\n"
+            "Soatlik stavka emas, oylik maoshni kiriting."
         )
         return
+    if salary > MAX_MONTHLY_SALARY:
+        await message.answer(f"⚠️ Oylik maosh {_money(MAX_MONTHLY_SALARY)} so'mdan oshmasligi kerak.")
+        return
 
-    await state.update_data(rate=rate)
+    await state.update_data(salary=salary)
+    data = await state.get_data()
+    if "message_id" not in data:
+        # The flow message is unknown (should not happen): continue in a new message
+        sent = await message.answer("⏳")
+        await state.update_data(chat_id=sent.chat.id, message_id=sent.message_id)
     await show_step(bot, state, "confirm")
 
 
@@ -305,15 +330,18 @@ async def on_confirm(callback: types.CallbackQuery, state: FSMContext, bot: Bot)
 
     start = _hhmm(data["start_hour"], data["start_minute"])
     end = _hhmm(data["end_hour"], data["end_minute"])
-    await db.save_work_schedule(data["employee_id"], start, end, data["rate"])
+    await db.save_work_schedule(data["employee_id"], start, end, data["salary"])
 
     await state.clear()
-    await _edit_flow_message(bot, data, "✅ <b>Saqlandi:</b>\n\n" + _summary(data))
+    await _edit_flow_message(
+        bot, callback.message.chat.id, callback.message.message_id,
+        "✅ <b>Saqlandi:</b>\n\n" + _summary(data),
+    )
     await callback.answer("Saqlandi")
 
 
 @router.callback_query(
-    StateFilter(ShiftState.choosing, ShiftState.entering_rate),
+    StateFilter(ShiftState.choosing, ShiftState.entering_salary),
     F.data == "sh:back",
 )
 async def on_back(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
@@ -323,18 +351,19 @@ async def on_back(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
         await callback.answer()
         return
 
-    await show_step(bot, state, previous)
+    await show_step(bot, state, previous, callback.message)
     await callback.answer()
 
 
 @router.callback_query(
-    StateFilter(ShiftState.choosing, ShiftState.entering_rate),
+    StateFilter(ShiftState.choosing, ShiftState.entering_salary),
     F.data == "sh:cancel",
 )
 async def on_cancel(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
-    data = await state.get_data()
     await state.clear()
-    await _edit_flow_message(bot, data, "Bekor qilindi.")
+    await _edit_flow_message(
+        bot, callback.message.chat.id, callback.message.message_id, "Bekor qilindi."
+    )
     await callback.answer()
 
 

@@ -7,7 +7,7 @@ from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
 import database as db
-from services.worktime import shift_hours
+from services.worktime import hourly_rate, shift_hours
 
 TABLES_DIR = "data/tables"
 
@@ -18,16 +18,17 @@ PAY_HEADER = [
     "Kunlik norma (soat)",
     "Oylik norma (soat)",
     "Farq (soat)",
-    "Soatlik stavka (so'm)",
-    "Oylik (so'm)",
+    "Belgilangan oylik (so'm)",
+    "Soatlik stavka (hisoblangan, so'm)",
+    "Ishlagan oylik (so'm)",
 ]
 
 
 def _pay_columns(settings, worked_days: list) -> list:
     """
-    Build the schedule / norm / overtime / rate / salary cells for one employee.
+    Build the schedule / norms / overtime / salary cells for one employee.
 
-    settings is (shift_start, shift_end, hourly_rate) or None.
+    settings is (shift_start, shift_end, monthly_salary) or None.
     worked_days is the list of worked hours, one value per day the employee worked.
 
     Every worked day is split into two parts:
@@ -39,26 +40,36 @@ def _pay_columns(settings, worked_days: list) -> list:
 
     - Monthly norm = sum of the norm parts.
     - Overtime ("Farq") = sum of the overtime parts, never negative.
-    - Salary = monthly norm * hourly rate. Overtime is NOT paid here:
+    - Fixed monthly salary = the salary the admin entered, shown as is.
+    - Hourly rate = (monthly salary / 26) / daily norm.
+    - Earned salary = hourly rate * monthly norm. Overtime is NOT paid here:
       the admin sets its price and calculates it by hand.
     """
     if settings is None:
         return [None] * len(PAY_HEADER)
 
-    shift_start, shift_end, hourly_rate = settings
+    shift_start, shift_end, monthly_salary = settings
     daily_norm = shift_hours(shift_start, shift_end)
     month_norm = round(sum(min(hours, daily_norm) for hours in worked_days), 2)
     overtime = round(sum(max(0.0, hours - daily_norm) for hours in worked_days), 2)
-    salary = round(month_norm * hourly_rate) if hourly_rate else None
 
-    return [f"{shift_start}–{shift_end}", daily_norm, month_norm, overtime, hourly_rate, salary]
+    hourly = earned = None
+    if monthly_salary:
+        rate = hourly_rate(monthly_salary, daily_norm)
+        hourly = round(rate, 2)
+        earned = round(rate * month_norm)  # computed from the unrounded rate
+
+    return [
+        f"{shift_start}–{shift_end}", daily_norm, month_norm, overtime,
+        monthly_salary, hourly, earned,
+    ]
 
 
 async def generate_monthly_tabel(year: int, month: int) -> str:
     """
     Build one tabel for the given month:
     Xodim F.I.Sh. | Username | Lavozim | Do'kon/Guruh | <every date> |
-    Umumiy ish kuni | Umumiy soat | <schedule, norm, overtime, rate, salary>
+    Umumiy ish kuni | Umumiy soat | <schedule, norms, overtime, fixed salary, hourly rate, earned salary>
 
     All departments (Savdo, Ishlab chiqarish, Haydovchi, I.T.R) are in one sheet,
     told apart by the "Lavozim" column.
@@ -129,11 +140,15 @@ async def generate_monthly_tabel(year: int, month: int) -> str:
     for i in range(1, len(header) + 1):
         ws.column_dimensions[get_column_letter(i)].width = 14
 
-    # Thousands separators for the money columns
-    for title in ("Soatlik stavka (so'm)", "Oylik (so'm)"):
+    # Thousands separators for money, two decimals for the calculated hourly rate
+    for title, number_format in (
+        ("Belgilangan oylik (so'm)", "#,##0"),
+        ("Soatlik stavka (hisoblangan, so'm)", "#,##0.00"),
+        ("Ishlagan oylik (so'm)", "#,##0"),
+    ):
         column = header.index(title) + 1
         for cells in ws.iter_rows(min_row=2, min_col=column, max_col=column):
-            cells[0].number_format = "#,##0"
+            cells[0].number_format = number_format
 
     os.makedirs(TABLES_DIR, exist_ok=True)
     file_path = os.path.join(TABLES_DIR, f"Tabel_{month:02d}-{year}.xlsx")

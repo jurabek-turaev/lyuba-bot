@@ -41,3 +41,14 @@ def shift_hours(shift_start: str, shift_end: str) -> float:
         delta += timedelta(days=1)
 
     return round(delta.total_seconds() / 3600, 2)
+
+
+STANDARD_MONTH_DAYS = 26  # standard number of working days in a month
+
+
+def hourly_rate(monthly_salary: int, daily_norm: float) -> float:
+    """
+    Hourly rate derived from a fixed monthly salary:
+    (monthly salary / standard month days) / daily norm hours.
+    """
+    return monthly_salary / STANDARD_MONTH_DAYS / daily_norm
