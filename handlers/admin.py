@@ -37,8 +37,8 @@ async def send_help_message(message: types.Message):
         "└ Xodimni ro'yxatdan tanlab, uni botdan bloklash (ishdan chiqarish) imkonini beradi.\n\n"
 
         "🕘 <b>/ish_vaqti_belgilash</b>\n"
-        "└ Xodimning doimiy ish vaqtini (norma) va soatlik stavkasini belgilaydi: "
-        "bo'lim → xodim → boshlanish va tugash vaqti → stavka → tasdiqlash.\n"
+        "└ Xodimning doimiy ish vaqtini (norma) va belgilangan oylik maoshini belgilaydi: "
+        "bo'lim → xodim → boshlanish va tugash vaqti → oylik maosh → tasdiqlash.\n"
         "└ Qayta bajarilsa, eski qiymatlar yangisi bilan almashtiriladi."
     )
 

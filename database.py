@@ -10,6 +10,29 @@ async def _column_exists(db, table: str, column: str) -> bool:
     return column in columns
 
 
+async def _convert_hourly_rates(db):
+    """
+    One-time conversion, run when the monthly_salary column is created.
+
+    Hourly rates saved before the switch to monthly salaries become monthly
+    salaries, so the hourly rate derived from them stays exactly the same:
+    monthly salary = hourly rate * daily norm * standard month days.
+    """
+    # Imported here so database.py has no module-level dependency on services
+    from services.worktime import STANDARD_MONTH_DAYS, shift_hours
+
+    cursor = await db.execute(
+        """SELECT user_id, shift_start, shift_end, hourly_rate FROM employees
+           WHERE hourly_rate IS NOT NULL AND shift_start IS NOT NULL AND shift_end IS NOT NULL"""
+    )
+    for user_id, shift_start, shift_end, rate in await cursor.fetchall():
+        monthly_salary = round(rate * shift_hours(shift_start, shift_end) * STANDARD_MONTH_DAYS)
+        await db.execute(
+            "UPDATE employees SET monthly_salary = ? WHERE user_id = ?",
+            (monthly_salary, user_id),
+        )
+
+
 async def init_db():
     """Bot ishga tushganda bir marta chaqiriladi (bot.py da)."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -51,8 +74,12 @@ async def init_db():
             await db.execute("ALTER TABLE employees ADD COLUMN shift_start TEXT")
         if not await _column_exists(db, "employees", "shift_end"):
             await db.execute("ALTER TABLE employees ADD COLUMN shift_end TEXT")
+        # hourly_rate is legacy: it is no longer written, only read once by the conversion below
         if not await _column_exists(db, "employees", "hourly_rate"):
             await db.execute("ALTER TABLE employees ADD COLUMN hourly_rate INTEGER")
+        if not await _column_exists(db, "employees", "monthly_salary"):
+            await db.execute("ALTER TABLE employees ADD COLUMN monthly_salary INTEGER")
+            await _convert_hourly_rates(db)
 
         await db.commit()
 
@@ -382,32 +409,33 @@ async def get_active_employees_by_department(department: str):
         return await cursor.fetchall()
 
 
-async def save_work_schedule(user_id: int, shift_start: str, shift_end: str, hourly_rate: int):
+async def save_work_schedule(user_id: int, shift_start: str, shift_end: str, monthly_salary: int):
     """
-    Save the employee's permanent daily schedule ("HH:MM" strings) and hourly rate.
-    Overwrites any previous values.
+    Save the employee's permanent daily schedule ("HH:MM" strings) and fixed monthly salary.
+    Overwrites any previous values. The hourly rate is not stored: it is derived from
+    the monthly salary and the daily norm, so it follows every schedule change.
     """
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """UPDATE employees
-               SET shift_start = ?, shift_end = ?, hourly_rate = ?
+               SET shift_start = ?, shift_end = ?, monthly_salary = ?
                WHERE user_id = ?""",
-            (shift_start, shift_end, hourly_rate, user_id),
+            (shift_start, shift_end, monthly_salary, user_id),
         )
         await db.commit()
 
 
 async def get_pay_settings():
     """
-    Schedule and hourly rate of every employee that has a schedule.
+    Schedule and fixed monthly salary of every employee that has a schedule.
     Inactive employees are included on purpose: their last month still has to be paid.
-    Returns {user_id: (shift_start, shift_end, hourly_rate)}.
+    Returns {user_id: (shift_start, shift_end, monthly_salary)}.
     """
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            """SELECT user_id, shift_start, shift_end, hourly_rate
+            """SELECT user_id, shift_start, shift_end, monthly_salary
                FROM employees
                WHERE shift_start IS NOT NULL AND shift_end IS NOT NULL"""
         )
         rows = await cursor.fetchall()
-    return {user_id: (start, end, rate) for user_id, start, end, rate in rows}
+    return {user_id: (start, end, salary) for user_id, start, end, salary in rows}
