@@ -40,7 +40,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     if department is None:
         # Yangi xodim — bo'lim FAQAT bir marta so'raladi
-        await message.answer("Assalomu alaykum! Ishga kelish-ketish tizimiga xush kelibsiz.")
+        await message.answer("Assalomu alaykum! Lyuba korxonasi kadrlar tizimiga xush kelibsiz.")
         await message.answer(
             "Qaysi bo'limda ishlaysiz? (bu savol faqat birinchi marta beriladi)",
             reply_markup=get_department_keyboard(),
