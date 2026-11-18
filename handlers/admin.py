@@ -36,10 +36,18 @@ async def send_help_message(message: types.Message):
         "└ Hozirda faol bo'lgan barcha xodimlar ro'yxatini va ularning bo'limlarini chiqaradi.\n"
         "└ Xodimni ro'yxatdan tanlab, uni botdan bloklash (ishdan chiqarish) imkonini beradi.\n\n"
 
+        "📝 <b>/arizalar</b>\n"
+        "└ Javob kutayotgan arizalarni (yangi yoki qayta ishga olinmoqchi bo'lgan xodimlar) tugmalar bilan ko'rsatadi: "
+        "tasdiqlash, rad etish yoki bloklash.\n"
+        "└ <code>/blokdan_chiqar 123456789</code> — bloklangan foydalanuvchini blokdan chiqaradi.\n\n"
+
         "🕘 <b>/ish_vaqti_belgilash</b>\n"
         "└ Xodimning doimiy ish vaqtini (norma) va belgilangan oylik maoshini belgilaydi: "
         "bo'lim → xodim → boshlanish va tugash vaqti → oylik maosh → tasdiqlash.\n"
-        "└ Qayta bajarilsa, eski qiymatlar yangisi bilan almashtiriladi."
+        "└ Qayta bajarilsa, eski qiymatlar yangisi bilan almashtiriladi.\n\n"
+
+        "📋 <b>/menu</b>\n"
+        "└ Hamma amallarni pastdagi doimiy tugmalar sifatida chiqaradi (buyruq yozish shart emas)."
     )
 
     await message.answer(help_text, parse_mode="HTML")
@@ -156,7 +164,7 @@ async def confirm_deactivate(callback_query: types.CallbackQuery):
     dept_label = f" ({department})" if department else ""
     await callback_query.message.edit_text(
         f"⚠️ <b>{name_label}</b>{dept_label} xodimini ishdan chiqarasizmi?\n\n"
-        "U botdan bloklanadi (bot unga javob bermaydi), lekin davomat tarixi saqlanadi.",
+        "U botdan foydalana olmaydi (faqat /start orqali qayta ariza yubora oladi). Davomat tarixi saqlanadi.",
         reply_markup=builder.as_markup(),
         parse_mode="HTML",
     )
@@ -193,8 +201,8 @@ async def do_deactivate(callback_query: types.CallbackQuery):
     await db.deactivate_employee(target_id)
 
     await callback_query.message.edit_text(
-        f"✅ <b>{full_name}</b> ishdan chiqarildi. Bot endi unga javob bermaydi.\n"
-        "Davomat tarixi saqlanib qoldi.",
+        f"✅ <b>{full_name}</b> ishdan chiqarildi. U botdan foydalana olmaydi.\n"
+        "Qayta ishga olish uchun u /start bosib ariza yuborishi kerak. Davomat tarixi saqlanib qoldi.",
         parse_mode="HTML",
     )
     await callback_query.answer("Bajarildi")

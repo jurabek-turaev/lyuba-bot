@@ -7,6 +7,13 @@ class AttendanceState(StatesGroup):
     waiting_for_location = State()
 
 
+class ApplicationState(StatesGroup):
+    """Steps of an employee application (new or removed employee asking for access)."""
+    waiting_for_name = State()
+    waiting_for_phone = State()
+    confirming = State()
+
+
 class ShiftState(StatesGroup):
     """Admin flow for setting an employee's work schedule and hourly rate."""
     choosing = State()        # inline-button steps: department, employee, time, confirmation

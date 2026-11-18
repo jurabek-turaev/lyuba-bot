@@ -63,6 +63,21 @@ async def init_db():
             )
         """)
 
+        # Applications of new or removed employees waiting for the admin's decision
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                full_name TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                username TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                decided_at TEXT
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_applications_user ON applications (user_id)")
+
         # --- Migratsiya: eski bazaga yangi ustunlarni qo'shish (buzmasdan) ---
         # Botning oldingi versiyasidan qolgan baza uchun kerak.
         if not await _column_exists(db, "employees", "is_active"):
@@ -439,3 +454,170 @@ async def get_pay_settings():
         )
         rows = await cursor.fetchall()
     return {user_id: (start, end, salary) for user_id, start, end, salary in rows}
+
+
+# ===========================
+# Employee applications (approval flow)
+# ===========================
+def _now_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+async def is_employee_approved(user_id: int) -> bool:
+    """
+    True for an active employee who completed registration: the employee has a
+    name, or already has attendance records (safety net for old data).
+    A row that only holds a department (registration never finished) is NOT approved.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT 1 FROM employees e
+               WHERE e.user_id = ? AND e.is_active = 1
+                 AND (
+                     (e.full_name IS NOT NULL AND TRIM(e.full_name) != '')
+                     OR EXISTS (SELECT 1 FROM attendance a WHERE a.user_id = e.user_id)
+                 )""",
+            (user_id,),
+        )
+        return (await cursor.fetchone()) is not None
+
+
+async def create_application(user_id: int, full_name: str, phone: str, username: str | None):
+    """
+    Store a new pending application and return its id.
+    Returns None when the user already has a pending one (double tap, repeated request).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """INSERT INTO applications (user_id, full_name, phone, username, status, created_at)
+               SELECT ?, ?, ?, ?, 'pending', ?
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM applications WHERE user_id = ? AND status = 'pending'
+               )""",
+            (user_id, full_name, phone, username, _now_str(), user_id),
+        )
+        await db.commit()
+        return cursor.lastrowid if cursor.rowcount == 1 else None
+
+
+async def get_latest_application(user_id: int):
+    """(id, status, decided_at) of the user's most recent application, or None."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT id, status, decided_at FROM applications
+               WHERE user_id = ? ORDER BY id DESC LIMIT 1""",
+            (user_id,),
+        )
+        return await cursor.fetchone()
+
+
+async def get_application(app_id: int):
+    """(id, user_id, full_name, phone, username, status, created_at) or None."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT id, user_id, full_name, phone, username, status, created_at
+               FROM applications WHERE id = ?""",
+            (app_id,),
+        )
+        return await cursor.fetchone()
+
+
+async def get_pending_applications():
+    """Pending applications, oldest first, same columns as get_application()."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT id, user_id, full_name, phone, username, status, created_at
+               FROM applications WHERE status = 'pending' ORDER BY id"""
+        )
+        return await cursor.fetchall()
+
+
+async def decide_application(app_id: int, status: str) -> bool:
+    """
+    Give a pending application a final status ('rejected' or 'blocked').
+    Returns False when it was not pending any more (already decided).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE applications SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
+            (status, _now_str(), app_id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def approve_application(app_id: int):
+    """
+    Approve a pending application and add (or re-activate) the employee in ONE
+    transaction. Returns (user_id, full_name), or None when it was not pending.
+
+    A returning employee keeps the department, schedule and salary. A row that
+    never had a name (unfinished registration) loses its leftover department,
+    so the person chooses it again after the approval.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE applications SET status = 'approved', decided_at = ? WHERE id = ? AND status = 'pending'",
+            (_now_str(), app_id),
+        )
+        if cursor.rowcount != 1:
+            return None
+
+        cursor = await db.execute(
+            "SELECT user_id, full_name, username FROM applications WHERE id = ?", (app_id,)
+        )
+        user_id, full_name, username = await cursor.fetchone()
+
+        await db.execute(
+            """INSERT INTO employees (user_id, full_name, username, is_active) VALUES (?, ?, ?, 1)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   department = CASE
+                       WHEN employees.full_name IS NULL OR TRIM(employees.full_name) = ''
+                       THEN NULL ELSE employees.department END,
+                   full_name = excluded.full_name,
+                   username = excluded.username,
+                   is_active = 1""",
+            (user_id, full_name, username),
+        )
+        await db.commit()
+        return user_id, full_name
+
+
+async def get_last_work_info(user_id: int):
+    """(department, last work date) of a returning employee; None when the user never worked."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT e.department, MAX(a.work_date)
+               FROM attendance a LEFT JOIN employees e ON e.user_id = a.user_id
+               WHERE a.user_id = ?""",
+            (user_id,),
+        )
+        department, last_work_date = await cursor.fetchone()
+    return None if last_work_date is None else (department, last_work_date)
+
+
+async def unblock_user(user_id: int) -> bool:
+    """
+    Lift a block: the blocked application becomes 'rejected' with the cooldown
+    already over, so the user may apply again. False when the user was not blocked.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """UPDATE applications SET status = 'rejected', decided_at = '1970-01-01 00:00:00'
+               WHERE user_id = ? AND status = 'blocked'""",
+            (user_id,),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_blocked_applicants():
+    """(user_id, full_name, phone) of every user whose latest application is 'blocked'."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT a.user_id, a.full_name, a.phone FROM applications a
+               WHERE a.status = 'blocked'
+                 AND a.id = (SELECT MAX(id) FROM applications WHERE user_id = a.user_id)
+               ORDER BY a.id"""
+        )
+        return await cursor.fetchall()

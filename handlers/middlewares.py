@@ -2,7 +2,7 @@ import logging
 from typing import Any, Awaitable, Callable, Dict
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram.types import TelegramObject
 
 from config import OWNER_ID
 import database as db
@@ -10,13 +10,16 @@ import database as db
 logger = logging.getLogger(__name__)
 
 
-class ActiveEmployeeMiddleware(BaseMiddleware):
+class AccessMiddleware(BaseMiddleware):
     """
-    Ishdan ketgan (is_active=0) xodimlarni to'sadi: ular botga yozsa,
-    hech qanday javob bermaydi va handlerga o'tkazilmaydi — bot ular
-    uchun butunlay "jim" bo'ladi.
+    Puts the access level of the sender into the handler data as data["access"]:
 
-    OWNER_ID hech qachon bloklanmaydi.
+    - "owner":      OWNER_ID, never restricted
+    - "approved":   active employee who completed registration
+    - "unapproved": everybody else (strangers, pending applicants, removed employees)
+
+    Nothing is dropped here. The application router reacts to "unapproved" users and
+    swallows everything it does not handle, so the employee handlers never see them.
     """
 
     async def __call__(
@@ -26,22 +29,15 @@ class ActiveEmployeeMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         user = data.get("event_from_user")
-
-        # Faqat shaxsiy chatdagi xabarlar uchun — guruhga tegmaymiz
         chat = data.get("event_chat")
-        if chat is not None and chat.type != "private":
-            return await handler(event, data)
 
-        if user is not None and user.id != OWNER_ID:
-            if not await db.is_employee_active(user.id):
-                logger.info("Bloklangan xodim yozdi, e'tiborsiz qoldirildi (user_id=%s)", user.id)
-                # Callback bo'lsa, "soat" aylanib qolmasligi uchun jimgina yopamiz
-                if isinstance(event, CallbackQuery):
-                    try:
-                        await event.answer()
-                    except Exception:
-                        pass
-                # Message yoki boshqa event — umuman javob bermaymiz
-                return None
+        # Private chats only: groups are not touched
+        if user is not None and (chat is None or chat.type == "private"):
+            if user.id == OWNER_ID:
+                data["access"] = "owner"
+            elif await db.is_employee_approved(user.id):
+                data["access"] = "approved"
+            else:
+                data["access"] = "unapproved"
 
         return await handler(event, data)
