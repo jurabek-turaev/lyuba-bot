@@ -7,9 +7,6 @@ from config import SAVDO_BRANCHES, FIXED_DEPARTMENTS
 import database as db
 
 
-def test_func():
-    pass
-
 router = Router()
 router.message.filter(F.chat.type == "private")
 
@@ -96,6 +93,7 @@ async def process_branch_selection(callback_query: types.CallbackQuery, state: F
         return
 
     await state.update_data(chosen_branch=branch_name)
+    await db.save_employee_last_branch(callback_query.from_user.id, branch_name)
 
     await callback_query.message.answer(
         f"✅ Siz {branch_name} filialini tanladingiz.\n\n"

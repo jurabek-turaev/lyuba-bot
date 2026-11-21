@@ -6,7 +6,7 @@ from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import ContentType, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-from config import WORK_LOCATIONS, MAX_DISTANCE, DEVELOPER_ID
+from config import WORK_LOCATIONS, MAX_DISTANCE, DEVELOPER_ID, SAVDO_BRANCHES
 import database as db
 from services import gps, telegram_group
 from .states import AttendanceState, reset_keep_branch
@@ -107,9 +107,28 @@ async def handle_video(message: types.Message, state: FSMContext):
         await _process_video(message, state)
 
 
+async def _restore_branch(user_id: int):
+    """
+    Branch of the employee from the database. Used when FSM data is empty
+    (it lives in memory and is lost on a bot restart). None when unknown.
+    """
+    row = await db.get_employee_department_and_branch(user_id)
+    if row is None:
+        return None
+    department, last_branch = row
+    if department == "Savdo":
+        return last_branch if last_branch in SAVDO_BRANCHES else None
+    return department if department in WORK_LOCATIONS else None
+
+
 async def _process_video(message: types.Message, state: FSMContext):
     data = await state.get_data()
     branch_name = data.get("chosen_branch")
+
+    if not branch_name:
+        branch_name = await _restore_branch(message.from_user.id)
+        if branch_name:
+            await state.update_data(chosen_branch=branch_name)
 
     if not branch_name:
         await message.answer("⚠️ Avval /start orqali filialni tanlang.")
