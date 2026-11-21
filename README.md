@@ -6,8 +6,9 @@ video tasdig'i bilan qayd qiluvchi tizim. Oy oxirida `/tabel` orqali Excel hisob
 ## Imkoniyatlari
 
 - Ariza orqali ro'yxatdan o'tish: ism + telefon → admin tasdiqlaydi / rad etadi / bloklaydi
-- Bo'lim/filial tanlash (Savdo, Ishlab chiqarish, Haydovchi, I.T.R)
-- Dumaloq video (video_note) tasdig'i — guruhga avtomatik yuboriladi
+- Bo'lim va filiallarni admin botning o'zida boshqaradi (yaratish, tahrirlash, faolsizlantirish)
+- Bo'limda bitta filial bo'lsa — xodimga avtomatik, bir nechta bo'lsa — xodim o'zi tanlaydi
+- Dumaloq video (video_note) tasdig'i — filialga biriktirilgan guruhga avtomatik yuboriladi
 - GPS masofa tekshiruvi (belgilangan `MAX_DISTANCE` metr ichida bo'lishi shart);
   faqat jonli (live) lokatsiya qabul qilinadi — statik va forward qilingani rad etiladi
 - "Keldim" / "Ketdim" qayd qilish, ish soatini avtomatik hisoblash
@@ -31,8 +32,43 @@ tugmalarda bor — buyruq yozish shart emas.
 | `/hodimlar` | Faol xodimlar ro'yxati — tugma orqali ishdan chiqarish |
 | `/arizalar` | Kutilayotgan arizalar (tasdiqlash / rad etish / bloklash) |
 | `/ish_vaqti_belgilash` | Xodimning ish vaqti va oylik maoshini belgilash |
+| `/filiallar` | Bo'lim va filiallarni boshqarish (menyuda: 🗂 Bo'lim va filiallar) |
 | `/bolim_ozgartir [ID]` | O'zining yoki ko'rsatilgan xodimning bo'limini tozalaydi |
 | `/blokdan_chiqar ID` | Bloklangan foydalanuvchini blokdan chiqaradi |
+
+## Bo'lim va filiallar
+
+Bo'limlar, filiallar, ularning koordinatalari va guruhlari **bazada** saqlanadi va
+admin tomonidan `/filiallar` (yoki menyudagi «🗂 Bo'lim va filiallar») orqali boshqariladi.
+Yangi filial ochilsa, kodni o'zgartirish shart emas.
+
+- **Filial** — nomi, joylashuvi (koordinata) va video/xabarlar boradigan guruh.
+- **Bo'lim** — bir yoki bir nechta filialga biriktiriladi:
+  bitta filial bo'lsa xodimga avtomatik tanlanadi (masalan Zavod), bir nechta bo'lsa
+  xodim har safar o'zi tanlaydi (masalan Savdo do'konlari).
+
+**Joylashuvni kiritish** — quyidagilardan biri yuboriladi, bot nuqtani xaritada ko'rsatib
+tasdiq so'raydi:
+- Telegram lokatsiyasi (📎 → Location → xaritadan nuqta);
+- Google yoki Yandex xarita havolasi — brauzerdagi havola yoki brauzerdagi «Ulashish»
+  tugmasidan olingan qisqa havola;
+- koordinata matni, masalan `38.829001, 65.793878`.
+
+> Google/Yandex **mobil ilovasi**ning «Ulashish» havolasida koordinata bo'lmaydi — bunday
+> havola yuborilsa, bot boshqa usulni so'raydi.
+
+**Guruhlar** — botni kerakli Telegram guruhga qo'shing: bot uni avtomatik eslab qoladi
+va guruh filial sozlamasida ro'yxatdan tanlanadi. Guruh nomi o'zgarsa yoki supergroup'ga
+aylansa (ID o'zgaradi), bot buni ham o'zi kuzatadi.
+
+**O'chirish va faolsizlantirish:**
+- Ishlatilgan filial/bo'lim o'chirilmaydi, faqat **faolsizlantiriladi** — tarix saqlanadi.
+  O'chirish faqat hech qachon ishlatilmagan (xato yaratilgan) yozuv uchun mumkin.
+- Faol xodimlari bor bo'limni faolsizlantirib bo'lmaydi.
+- Faol xodimlari bor bo'limning yagona filialini faolsizlantirib / ajratib bo'lmaydi.
+- Ochiq smena qaysi filialda boshlangan bo'lsa, o'sha yerda yopiladi — hatto filial
+  keyinroq faolsizlantirilgan bo'lsa ham.
+- Filial nomi o'zgartirilsa, eski davomat yozuvlarida eski nom qoladi (tarix).
 
 ## Xodimni ishdan chiqarish haqida
 
@@ -68,11 +104,19 @@ cp .env.example .env
 | `BOT_TOKEN` | BotFather'dan olingan token |
 | `OWNER_ID` | Bot egasining Telegram ID'si (`/tabel` faqat shunga yuboriladi) |
 | `DEVELOPER_ID` | Dasturchining Telegram ID'si (test uchun masofa tekshiruvidan ozod) |
-| `GROUP_ID` | Savdo filiallari uchun umumiy guruh ID'si |
-| `PRODUCTION_LAT` / `PRODUCTION_LON` | Zavod hududi koordinatalari |
-| `PRODUCTION_GROUP_ID` | Ishlab chiqarish guruhi ID'si |
-| `MAX_DISTANCE` | Ruxsat etilgan masofa (metr), masalan `200` |
+| `MAX_DISTANCE` | Ruxsat etilgan masofa (metr), barcha filiallar uchun, masalan `200` |
 | `MAX_SHIFT_HOURS` | Maksimal smena (soat), masalan `12` |
+| `GROUP_ID`, `PRODUCTION_LAT`, `PRODUCTION_LON`, `PRODUCTION_GROUP_ID` | *Ixtiyoriy.* Faqat eski bazani ko'chirish uchun (pastga qarang). Yangi o'rnatishda bo'sh qoldiring |
+
+### Eski versiyadan yangilash
+
+Avval filiallar `config.py` da qo'lda yozilgan edi. Yangi versiya birinchi ishga
+tushganda katalog jadvallarini yaratadi va eski sozlamani **bir marta** ko'chiradi:
+3 ta Savdo do'koni (`GROUP_ID` guruhi bilan) va «Zavod» (`PRODUCTION_*` qiymatlari bilan),
+unga Ishlab chiqarish, Haydovchi, I.T.R bo'limlari biriktiriladi. Xodimlar va davomat
+yozuvlari o'zgarmaydi, qayta ro'yxatdan o'tish kerak emas.
+
+> Yangilashdan oldin bazaning nusxasini oling: `cp data/attendance.db data/attendance.backup.db`
 
 > ⚠️ `.env` faylni hech kimga bermang va git'ga yuklamang — u ichida bot tokeni bor.
 
@@ -110,6 +154,15 @@ python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python bot.py
+```
+
+---
+
+## Testlar
+
+```bash
+python -m unittest discover -s tests -t .
+NETWORK_TESTS=1 python -m unittest discover -s tests -t .   # qisqa havolalarni internet orqali ham tekshiradi
 ```
 
 ---

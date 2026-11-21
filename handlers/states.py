@@ -14,6 +14,13 @@ class ApplicationState(StatesGroup):
     confirming = State()
 
 
+class CatalogState(StatesGroup):
+    """Admin flow for departments and locations (handlers/catalog.py)."""
+    browsing = State()        # inline-button steps of a create / edit wizard
+    entering_name = State()   # waiting for a name typed as text
+    entering_point = State()  # waiting for a Telegram location, a maps link or "lat, lon"
+
+
 class ShiftState(StatesGroup):
     """Admin flow for setting an employee's work schedule and hourly rate."""
     choosing = State()        # inline-button steps: department, employee, time, confirmation

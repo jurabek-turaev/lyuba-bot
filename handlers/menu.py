@@ -24,7 +24,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import OWNER_ID
 import database as db
-from . import admin, application, shift
+from . import admin, application, catalog, shift
 
 router = Router()
 router.message.filter(F.chat.type == "private", F.from_user.id == OWNER_ID)
@@ -36,6 +36,7 @@ BTN_APPLICATIONS = "📝 Arizalar"
 BTN_SHIFT = "🕘 Ish vaqtini belgilash"
 BTN_DEPARTMENT = "🏢 Bo'limni o'zgartirish"
 BTN_UNBLOCK = "🔓 Blokdan chiqarish"
+BTN_CATALOG = "🗂 Bo'lim va filiallar"
 BTN_HELP = "📖 Yordam"
 
 
@@ -45,7 +46,7 @@ def admin_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_TABEL), KeyboardButton(text=BTN_EMPLOYEES)],
             [KeyboardButton(text=BTN_APPLICATIONS), KeyboardButton(text=BTN_SHIFT)],
             [KeyboardButton(text=BTN_DEPARTMENT), KeyboardButton(text=BTN_UNBLOCK)],
-            [KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_CATALOG), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -106,6 +107,11 @@ async def button_applications(message: types.Message, state: FSMContext, bot: Bo
 async def button_shift(message: types.Message, state: FSMContext):
     await state.clear()
     await shift.start_shift_setup(message, state)
+
+
+@router.message(F.text == BTN_CATALOG)
+async def button_catalog(message: types.Message, state: FSMContext):
+    await catalog.open_catalog(message, state)
 
 
 @router.message(F.text == BTN_HELP)

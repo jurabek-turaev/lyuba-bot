@@ -38,6 +38,22 @@ async def get_location(location_id: int) -> Location | None:
     return _location(row) if row and row[5] else None
 
 
+async def get_location_any(location_id: int) -> Location | None:
+    """Location by id even when it is deactivated, or None."""
+    row = await db.get_location(location_id)
+    return _location(row) if row else None
+
+
+async def open_shift_location(attendance_id: int) -> Location | None:
+    """
+    Where an open shift started. A shift is finished at that location even if the
+    admin deactivated it or unlinked it from the department after the check-in.
+    None for old records that have no location_id.
+    """
+    location_id = await db.get_attendance_location_id(attendance_id)
+    return await get_location_any(location_id) if location_id else None
+
+
 async def get_department(department_id: int) -> Department | None:
     """Active department by id, or None."""
     row = await db.get_department(department_id)

@@ -110,12 +110,18 @@ async def handle_video(message: types.Message, state: FSMContext):
 async def _process_video(message: types.Message, state: FSMContext):
     data = await state.get_data()
 
-    # FSM data lives in memory: after a bot restart the location comes from the database
-    location = await placement.current_location(message.from_user.id, data.get("location_id"))
+    # An open shift is finished where it started (even if that location was
+    # deactivated or unlinked since the check-in)
+    open_id = await db.get_open_attendance_id(message.from_user.id)
+    location = await placement.open_shift_location(open_id) if open_id else None
+
     if location is None:
-        await message.answer("⚠️ Avval /start orqali filialni tanlang.")
-        return
-    await state.update_data(location_id=location.id)
+        # FSM data lives in memory: after a bot restart the location comes from the database
+        location = await placement.current_location(message.from_user.id, data.get("location_id"))
+        if location is None:
+            await message.answer("⚠️ Avval /start orqali filialni tanlang.")
+            return
+        await state.update_data(location_id=location.id)
 
     await state.update_data(video_id=message.video_note.file_id)
 
@@ -206,8 +212,12 @@ async def handle_location(message: types.Message, state: FSMContext):
     user_loc = (message.location.latitude, message.location.longitude)
     data = await state.get_data()
 
-    location = await placement.current_location(message.from_user.id, data.get("location_id"))
     action = data.get("pending_action")
+    location = None
+    if action == "checkout" and data.get("open_attendance_id"):
+        location = await placement.open_shift_location(data["open_attendance_id"])
+    if location is None:
+        location = await placement.current_location(message.from_user.id, data.get("location_id"))
 
     if location is None or not action:
         await message.answer(

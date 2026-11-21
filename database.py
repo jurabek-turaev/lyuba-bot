@@ -755,10 +755,31 @@ async def _migrate_catalog():
         await db.commit()
 
 
+# What config.py held before the catalog moved into the database. Used ONCE, by the
+# migration that creates the catalog tables, so an existing installation keeps
+# working without the admin re-entering anything. Afterwards the admin manages it.
+LEGACY_SHOPS = [  # department "Savdo": (name, lat, lon)
+    ("Lyuba Orzu bozor", 38.828995, 65.793966),
+    ("Eski bozor", 38.869932, 65.801341),
+    ("Koson Lyuba", 39.035179, 65.583693),
+]
+LEGACY_SHOP_DEPARTMENT = "Savdo"
+LEGACY_FACTORY_DEPARTMENTS = ["Ishlab chiqarish", "Haydovchi", "I.T.R xodimlari"]
+
+
 async def _seed_catalog(db):
-    """Fill the empty catalog with exactly what config.py / .env describe today."""
+    """
+    Fill the new, empty catalog with the old hardcoded setup.
+
+    The groups and the factory coordinates come from the old .env values
+    (GROUP_ID, PRODUCTION_LAT / PRODUCTION_LON / PRODUCTION_GROUP_ID):
+    - GROUP_ID set              -> the Savdo shops are created;
+    - all PRODUCTION_* set      -> "Zavod" and the factory departments are created;
+    - nothing set (new install) -> the catalog stays empty, the admin fills it in the bot.
+    """
     # Imported here so database.py has no module-level dependency on config
-    from config import FIXED_DEPARTMENTS, GROUP_ID, PRODUCTION_LOCATION, SAVDO_BRANCHES, WORK_LOCATIONS
+    from config import (LEGACY_GROUP_ID, LEGACY_PRODUCTION_GROUP_ID,
+                        LEGACY_PRODUCTION_LAT, LEGACY_PRODUCTION_LON)
 
     now = _now_str()
 
@@ -779,30 +800,32 @@ async def _seed_catalog(db):
                 (cursor.lastrowid, location_id),
             )
 
-    shop_ids = []
-    for name in SAVDO_BRANCHES:
-        info = WORK_LOCATIONS[name]
-        shop_ids.append(await add_location(name, info["lat"], info["lon"], info.get("group_id", GROUP_ID)))
-    await add_department("Savdo", shop_ids)
-
-    factory_id = await add_location(
-        FACTORY_LOCATION_NAME,
-        PRODUCTION_LOCATION["lat"],
-        PRODUCTION_LOCATION["lon"],
-        PRODUCTION_LOCATION["group_id"],
-    )
-    for name in FIXED_DEPARTMENTS:
-        await add_department(name, [factory_id])
-
-    # Groups already in use; titles are filled in when the bot sees them
-    for chat_id in {GROUP_ID, PRODUCTION_LOCATION["group_id"]}:
+    async def add_group(chat_id: int):
+        # Titles are filled in when the admin opens the catalog
         await db.execute(
             "INSERT OR IGNORE INTO tg_groups (chat_id, title, updated_at) VALUES (?, NULL, ?)",
             (chat_id, now),
         )
 
-    logger.info("[catalog] seeded from config.py: %d shops + %s, %d departments",
-                len(shop_ids), FACTORY_LOCATION_NAME, 1 + len(FIXED_DEPARTMENTS))
+    seeded = []
+    if LEGACY_GROUP_ID is not None:
+        shop_ids = [await add_location(name, lat, lon, LEGACY_GROUP_ID) for name, lat, lon in LEGACY_SHOPS]
+        await add_department(LEGACY_SHOP_DEPARTMENT, shop_ids)
+        await add_group(LEGACY_GROUP_ID)
+        seeded.append(f"{len(shop_ids)} shops")
+
+    factory = (LEGACY_PRODUCTION_LAT, LEGACY_PRODUCTION_LON, LEGACY_PRODUCTION_GROUP_ID)
+    if None not in factory:
+        factory_id = await add_location(FACTORY_LOCATION_NAME, *factory)
+        for name in LEGACY_FACTORY_DEPARTMENTS:
+            await add_department(name, [factory_id])
+        await add_group(LEGACY_PRODUCTION_GROUP_ID)
+        seeded.append(f"{FACTORY_LOCATION_NAME} + {len(LEGACY_FACTORY_DEPARTMENTS)} departments")
+
+    if seeded:
+        logger.info("[catalog] seeded from the old setup: %s", ", ".join(seeded))
+    else:
+        logger.info("[catalog] empty catalog created; the admin fills it via /filiallar")
 
 
 async def _link_rows_by_name(db):
@@ -901,3 +924,244 @@ async def get_department_locations(department_id: int, active_only: bool = True)
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(query + " ORDER BY l.id", (department_id,))
         return await cursor.fetchall()
+
+
+# ===========================
+# Catalog management (admin)
+# ===========================
+async def catalog_name_taken(table: str, name: str, exclude_id: int | None = None) -> bool:
+    """
+    True when another department / location already has this name, ignoring case.
+    Compared in Python: SQLite NOCASE only folds Latin letters, not Cyrillic.
+    """
+    assert table in ("departments", "locations")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(f"SELECT id, name FROM {table}")
+        rows = await cursor.fetchall()
+    wanted = name.casefold()
+    return any(row_name.casefold() == wanted and row_id != exclude_id for row_id, row_name in rows)
+
+
+async def create_location(name: str, lat: float, lon: float, group_id: int | None, department_ids: list) -> int:
+    """Create an active location linked to the given departments; returns its id."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO locations (name, lat, lon, group_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            (name, lat, lon, group_id, _now_str()),
+        )
+        location_id = cursor.lastrowid
+        await db.executemany(
+            "INSERT OR IGNORE INTO department_locations (department_id, location_id) VALUES (?, ?)",
+            [(department_id, location_id) for department_id in department_ids],
+        )
+        await db.commit()
+        return location_id
+
+
+async def rename_location(location_id: int, name: str):
+    """
+    New name of a location. Employees' last_branch follows it; attendance.branch
+    keeps the old name on purpose (history of where people worked).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE locations SET name = ? WHERE id = ?", (name, location_id))
+        await db.execute("UPDATE employees SET last_branch = ? WHERE location_id = ?", (name, location_id))
+        await db.commit()
+
+
+async def update_location_coordinates(location_id: int, lat: float, lon: float):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE locations SET lat = ?, lon = ? WHERE id = ?", (lat, lon, location_id))
+        await db.commit()
+
+
+async def update_location_group(location_id: int, group_id: int | None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE locations SET group_id = ? WHERE id = ?", (group_id, location_id))
+        await db.commit()
+
+
+async def set_location_active(location_id: int, active: bool):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE locations SET is_active = ? WHERE id = ?", (1 if active else 0, location_id))
+        await db.commit()
+
+
+async def get_location_departments(location_id: int):
+    """(id, name, is_active) of the departments the location is linked to."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT d.id, d.name, d.is_active FROM departments d
+               JOIN department_locations dl ON dl.department_id = d.id
+               WHERE dl.location_id = ? ORDER BY d.id""",
+            (location_id,),
+        )
+        return await cursor.fetchall()
+
+
+async def location_usage(location_id: int):
+    """(attendance rows, open shifts, employees that chose it) of a location."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT
+                   (SELECT COUNT(*) FROM attendance WHERE location_id = ?),
+                   (SELECT COUNT(*) FROM attendance WHERE location_id = ? AND check_out_time IS NULL),
+                   (SELECT COUNT(*) FROM employees WHERE location_id = ?)""",
+            (location_id, location_id, location_id),
+        )
+        return await cursor.fetchone()
+
+
+async def delete_location(location_id: int) -> bool:
+    """
+    Delete a location that was never used (no attendance, no employee chose it).
+    Returns False, and deletes nothing, when it is in use.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT EXISTS (SELECT 1 FROM attendance WHERE location_id = ?)
+                   OR EXISTS (SELECT 1 FROM employees WHERE location_id = ?)""",
+            (location_id, location_id),
+        )
+        if (await cursor.fetchone())[0]:
+            return False
+        await db.execute("DELETE FROM department_locations WHERE location_id = ?", (location_id,))
+        await db.execute("DELETE FROM locations WHERE id = ?", (location_id,))
+        await db.commit()
+        return True
+
+
+async def create_department(name: str, location_ids: list) -> int:
+    """Create an active department linked to the given locations; returns its id."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO departments (name, created_at) VALUES (?, ?)", (name, _now_str())
+        )
+        department_id = cursor.lastrowid
+        await db.executemany(
+            "INSERT OR IGNORE INTO department_locations (department_id, location_id) VALUES (?, ?)",
+            [(department_id, location_id) for location_id in location_ids],
+        )
+        await db.commit()
+        return department_id
+
+
+async def rename_department(department_id: int, name: str):
+    """New name of a department; the employees' department text follows it (tabel, shift flow)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE departments SET name = ? WHERE id = ?", (name, department_id))
+        await db.execute("UPDATE employees SET department = ? WHERE department_id = ?", (name, department_id))
+        await db.commit()
+
+
+async def set_department_locations(department_id: int, location_ids: list):
+    """Replace the set of locations linked to a department."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM department_locations WHERE department_id = ?", (department_id,))
+        await db.executemany(
+            "INSERT INTO department_locations (department_id, location_id) VALUES (?, ?)",
+            [(department_id, location_id) for location_id in location_ids],
+        )
+        await db.commit()
+
+
+async def set_location_departments(location_id: int, department_ids: list):
+    """Replace the set of departments a location is linked to."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM department_locations WHERE location_id = ?", (location_id,))
+        await db.executemany(
+            "INSERT INTO department_locations (department_id, location_id) VALUES (?, ?)",
+            [(department_id, location_id) for department_id in department_ids],
+        )
+        await db.commit()
+
+
+async def set_department_active(department_id: int, active: bool):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE departments SET is_active = ? WHERE id = ?", (1 if active else 0, department_id))
+        await db.commit()
+
+
+async def department_usage(department_id: int):
+    """(active employees, all employees) that have this department."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT COALESCE(SUM(is_active = 1), 0), COUNT(*)
+               FROM employees WHERE department_id = ?""",
+            (department_id,),
+        )
+        return await cursor.fetchone()
+
+
+async def delete_department(department_id: int) -> bool:
+    """
+    Delete a department no employee ever had. Returns False, and deletes nothing,
+    when an employee (even a removed one) references it.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT EXISTS (SELECT 1 FROM employees WHERE department_id = ?)", (department_id,)
+        )
+        if (await cursor.fetchone())[0]:
+            return False
+        await db.execute("DELETE FROM department_locations WHERE department_id = ?", (department_id,))
+        await db.execute("DELETE FROM departments WHERE id = ?", (department_id,))
+        await db.commit()
+        return True
+
+
+async def get_attendance_location_id(attendance_id: int):
+    """location_id of an attendance record (None when unknown)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT location_id FROM attendance WHERE id = ?", (attendance_id,))
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+
+# ===========================
+# Telegram groups the bot is in
+# ===========================
+async def upsert_group(chat_id: int, title: str | None, is_member: bool):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO tg_groups (chat_id, title, is_member, updated_at) VALUES (?, ?, ?, ?)
+               ON CONFLICT(chat_id) DO UPDATE SET
+                   title = COALESCE(excluded.title, tg_groups.title),
+                   is_member = excluded.is_member,
+                   updated_at = excluded.updated_at""",
+            (chat_id, title, 1 if is_member else 0, _now_str()),
+        )
+        await db.commit()
+
+
+async def migrate_group(old_chat_id: int, new_chat_id: int):
+    """A group became a supergroup and got a new id: move the group and its locations to it."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO tg_groups (chat_id, title, is_member, updated_at)
+               SELECT ?, title, 1, ? FROM tg_groups WHERE chat_id = ?
+               ON CONFLICT(chat_id) DO UPDATE SET is_member = 1""",
+            (new_chat_id, _now_str(), old_chat_id),
+        )
+        await db.execute("UPDATE tg_groups SET is_member = 0 WHERE chat_id = ?", (old_chat_id,))
+        await db.execute("UPDATE locations SET group_id = ? WHERE group_id = ?", (new_chat_id, old_chat_id))
+        await db.commit()
+
+
+async def list_groups(members_only: bool = True):
+    """(chat_id, title, is_member) of the known groups."""
+    query = "SELECT chat_id, title, is_member FROM tg_groups"
+    if members_only:
+        query += " WHERE is_member = 1"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(query + " ORDER BY title IS NULL, title")
+        return await cursor.fetchall()
+
+
+async def get_group(chat_id: int):
+    """(chat_id, title, is_member) or None."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT chat_id, title, is_member FROM tg_groups WHERE chat_id = ?", (chat_id,)
+        )
+        return await cursor.fetchone()
