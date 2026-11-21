@@ -91,9 +91,12 @@ async def generate_monthly_tabel(year: int, month: int) -> str:
                 "name": full_name,
                 "username": username if username else "Mavjud emas",
                 "department": department if department else "Aniqlanmagan",
-                "branch": branch,
+                "branches": [],
                 "hours_by_date": {},
             }
+        # A Savdo employee may work in several shops during the month: list them all
+        if branch and branch not in employees[user_id]["branches"]:
+            employees[user_id]["branches"].append(branch)
 
         d = datetime.strptime(work_date, "%Y-%m-%d").strftime("%d.%m.%Y")
         current = employees[user_id]["hours_by_date"].get(d, 0.0)
@@ -116,7 +119,7 @@ async def generate_monthly_tabel(year: int, month: int) -> str:
         cell.alignment = Alignment(wrap_text=True, vertical="center")
 
     for user_id, emp in sorted(employees.items(), key=lambda item: item[1]["name"]):
-        row = [emp["name"], emp["username"], emp["department"], emp["branch"]]
+        row = [emp["name"], emp["username"], emp["department"], ", ".join(emp["branches"])]
 
         worked_days = []  # rounded hours of every day the employee worked
         total_hours = 0.0

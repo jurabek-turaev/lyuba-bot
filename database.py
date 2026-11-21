@@ -95,6 +95,10 @@ async def init_db():
         if not await _column_exists(db, "employees", "monthly_salary"):
             await db.execute("ALTER TABLE employees ADD COLUMN monthly_salary INTEGER")
             await _convert_hourly_rates(db)
+        # Last Savdo shop chosen by the employee: FSM data lives in memory, so after
+        # a bot restart the branch is restored from here
+        if not await _column_exists(db, "employees", "last_branch"):
+            await db.execute("ALTER TABLE employees ADD COLUMN last_branch TEXT")
 
         await db.commit()
 
@@ -167,6 +171,25 @@ async def reset_employee_department(user_id: int):
         await db.commit()
 
 
+async def save_employee_last_branch(user_id: int, branch: str):
+    """Remember the Savdo shop the employee chose (restored after a bot restart)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE employees SET last_branch = ? WHERE user_id = ?",
+            (branch, user_id),
+        )
+        await db.commit()
+
+
+async def get_employee_department_and_branch(user_id: int):
+    """(department, last_branch) of the employee, or None."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT department, last_branch FROM employees WHERE user_id = ?", (user_id,)
+        )
+        return await cursor.fetchone()
+
+
 async def update_username(user_id: int, username: str):
     """Har safar video kelganda username'ni yangilab turadi (xodim o'zgartirgan bo'lishi mumkin)."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -220,16 +243,21 @@ async def create_check_in(user_id: int, full_name: str, branch: str, distance: i
 
 
 async def create_check_out(attendance_id: int, distance: int):
+    """
+    Close the record. Returns the check-out time, or None when the record is
+    already closed (for example auto-close closed it while the employee was
+    still sending the location) — a closed record is never overwritten.
+    """
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
+        cursor = await db.execute(
             """UPDATE attendance
                SET check_out_time = ?, check_out_distance = ?
-               WHERE id = ?""",
+               WHERE id = ? AND check_out_time IS NULL""",
             (now, distance, attendance_id),
         )
         await db.commit()
-    return now
+    return now if cursor.rowcount == 1 else None
 
 
 async def save_work_hours(attendance_id: int, hours: float):

@@ -5,28 +5,39 @@ video tasdig'i bilan qayd qiluvchi tizim. Oy oxirida `/tabel` orqali Excel hisob
 
 ## Imkoniyatlari
 
+- Ariza orqali ro'yxatdan o'tish: ism + telefon → admin tasdiqlaydi / rad etadi / bloklaydi
 - Bo'lim/filial tanlash (Savdo, Ishlab chiqarish, Haydovchi, I.T.R)
 - Dumaloq video (video_note) tasdig'i — guruhga avtomatik yuboriladi
-- GPS masofa tekshiruvi (belgilangan `MAX_DISTANCE` metr ichida bo'lishi shart)
+- GPS masofa tekshiruvi (belgilangan `MAX_DISTANCE` metr ichida bo'lishi shart);
+  faqat jonli (live) lokatsiya qabul qilinadi — statik va forward qilingani rad etiladi
 - "Keldim" / "Ketdim" qayd qilish, ish soatini avtomatik hisoblash
 - Tungi smenani to'g'ri hisoblash (kun chegarasidan o'tsa ham)
 - "Ketdim" bosilmasa — smenani avtomatik yopish (auto-close)
-- Oylik Excel tabel (`/tabel` — faqat bot egasiga)
+- Oylik Excel tabel (`/tabel` — faqat bot egasiga), ish grafigi, norma va maosh hisobi bilan
+- Xodimga doimiy ish vaqti va oylik maosh belgilash (soatlik stavka avtomatik hisoblanadi)
 - Xodimni ishdan chiqarish — `/hodimlar` (soft-delete: tarix saqlanadi, bot bloklaydi)
 - Har oy 1-sanasi 00:30 da o'tgan oy tabeli avtomatik egasiga yuboriladi va arxivlanadi
 
 ## Egasi (OWNER_ID) uchun buyruqlar
 
+Barcha amallar `/menu` (yoki xodim bo'lmagan egasi uchun `/start`) chiqaradigan doimiy
+tugmalarda bor — buyruq yozish shart emas.
+
 | Buyruq | Vazifa |
 |--------|--------|
+| `/menu` | Admin tugmalarini chiqaradi |
+| `/help` | Buyruqlar bo'yicha yo'riqnoma |
 | `/tabel` | Joriy oy tabelini Excel qilib oladi |
 | `/hodimlar` | Faol xodimlar ro'yxati — tugma orqali ishdan chiqarish |
+| `/arizalar` | Kutilayotgan arizalar (tasdiqlash / rad etish / bloklash) |
+| `/ish_vaqti_belgilash` | Xodimning ish vaqti va oylik maoshini belgilash |
 | `/bolim_ozgartir [ID]` | O'zining yoki ko'rsatilgan xodimning bo'limini tozalaydi |
+| `/blokdan_chiqar ID` | Bloklangan foydalanuvchini blokdan chiqaradi |
 
 ## Xodimni ishdan chiqarish haqida
 
 `/hodimlar` orqali chiqarilgan xodim:
-- Botdan bloklanadi — bot unga umuman javob bermaydi (jim).
+- Botdan foydalana olmaydi — qaytmoqchi bo'lsa, `/start` orqali qayta ariza yuboradi.
 - Faol xodimlar ro'yxatidan chiqadi.
 - Lekin uning **davomat tarixi bazada saqlanadi** — hisobotlar buzilmaydi.
 - Joriy oy tabelida u oy oxirigacha ko'rinadi (ishlagan kunlari adolatli hisobga olinadi).
@@ -56,6 +67,7 @@ cp .env.example .env
 |-------------|------|
 | `BOT_TOKEN` | BotFather'dan olingan token |
 | `OWNER_ID` | Bot egasining Telegram ID'si (`/tabel` faqat shunga yuboriladi) |
+| `DEVELOPER_ID` | Dasturchining Telegram ID'si (test uchun masofa tekshiruvidan ozod) |
 | `GROUP_ID` | Savdo filiallari uchun umumiy guruh ID'si |
 | `PRODUCTION_LAT` / `PRODUCTION_LON` | Zavod hududi koordinatalari |
 | `PRODUCTION_GROUP_ID` | Ishlab chiqarish guruhi ID'si |

@@ -56,6 +56,7 @@ async def send_check_out(bot: Bot, name: str, branch: str, distance: int, time_s
         f"📍 Holat: Ketdi\n"
         f"📏 Masofa: {distance} metr\n"
         f"🕒 Vaqt: {time_str}\n"
+        f"⏱ Ishlagan vaqti: {hours:g} soat"
     )
     await with_retry(
         lambda: bot.send_message(
@@ -73,6 +74,7 @@ async def send_auto_close(bot: Bot, name: str, branch: str, time_str: str, hours
         f"🏢 Filial: {branch}\n"
         f"📍 Holat: Ketdim bosilmadi — maksimal smena vaqti tugagani uchun tizim tomonidan yopildi\n"
         f"🕒 Yopilgan vaqt: {time_str}\n"
+        f"⏱ Hisoblangan vaqt: {hours:g} soat"
     )
     await with_retry(
         lambda: bot.send_message(

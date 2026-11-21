@@ -61,7 +61,12 @@ async def _check_and_close(bot: Bot):
         hours = worktime.calculate_hours(check_in_time_str, check_out_time_str)
         await db.save_work_hours(attendance_id, hours)
 
-        await telegram_group.send_auto_close(bot, full_name, branch, check_out_time_str, hours)
+        # The record is already closed: a failed group message must not stop the
+        # employee notification or the remaining records of this check
+        try:
+            await telegram_group.send_auto_close(bot, full_name, branch, check_out_time_str, hours)
+        except Exception:
+            logger.exception("[auto_close] guruhga xabar yuborib bo'lmadi (branch=%s)", branch)
 
         try:
             await bot.send_message(

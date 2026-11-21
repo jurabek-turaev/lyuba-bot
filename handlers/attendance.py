@@ -133,7 +133,16 @@ async def finalize_check_out(message: types.Message, state: FSMContext, distance
     branch = data.get("chosen_branch")
     open_id = data.get("open_attendance_id")
 
-    check_out_time = await db.create_check_out(open_id, distance)
+    check_out_time = await db.create_check_out(open_id, distance) if open_id else None
+    if check_out_time is None:
+        # Auto-close already closed this shift while the employee was sending the location
+        await message.answer(
+            "⚠️ Bu smena allaqachon yopilgan (tizim tomonidan avtomatik yopilgan bo'lishi mumkin).",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await reset_keep_branch(state)
+        return
+
     check_in_time, _ = await db.get_attendance_times(open_id)
     hours = worktime.calculate_hours(check_in_time, check_out_time)
     await db.save_work_hours(open_id, hours)
