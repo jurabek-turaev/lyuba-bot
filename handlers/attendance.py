@@ -7,6 +7,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 
 import database as db
 from services import worktime, telegram_group
+from services.placement import Location
 from .states import AttendanceState, reset_keep_branch
 
 logger = logging.getLogger(__name__)
@@ -31,10 +32,10 @@ async def ask_location_for_check_in(message: types.Message, state: FSMContext):
     data = await state.get_data()
 
     name = data.get("name")
-    branch = data.get("chosen_branch")
+    location_id = data.get("location_id")
     video_id = data.get("video_id")
 
-    if not (name and branch and video_id):
+    if not (name and location_id and video_id):
         await message.answer(
             "⚠️ Avval video yuborishingiz kerak.",
             reply_markup=ReplyKeyboardRemove(),
@@ -90,10 +91,10 @@ async def ask_location_for_check_out(message: types.Message, state: FSMContext):
 # Yakunlash funksiyalari — handlers/location.py dagi handle_location chaqiradi
 # (masofa allaqachon tekshirilgan va ruxsat etilgan chegarada)
 # ===========================
-async def finalize_check_in(message: types.Message, state: FSMContext, distance: int):
+async def finalize_check_in(message: types.Message, state: FSMContext, distance: int, location: Location):
     data = await state.get_data()
     name = data.get("name")
-    branch = data.get("chosen_branch")
+    branch = location.name
 
     user_id = message.from_user.id
     work_date = db.today_str()
@@ -106,7 +107,7 @@ async def finalize_check_in(message: types.Message, state: FSMContext, distance:
         await reset_keep_branch(state)
         return
 
-    await db.create_check_in(user_id, name, branch, distance, work_date)
+    await db.create_check_in(user_id, name, branch, distance, work_date, location.id)
 
     # Mahalliy (server TZ) vaqti — bazaga yoziladigan datetime.now() bilan izchil.
     # message.date ishlatilmaydi, chunki u Telegram bergan UTC vaqti bo'ladi.
@@ -115,7 +116,7 @@ async def finalize_check_in(message: types.Message, state: FSMContext, distance:
     # xodimga tasdiq berish va FSM'ni tozalash BLOKLANMASLIGI kerak. Aks holda
     # xodim tasdiq olmay qayta video yuboradi va holatlar chalkashadi.
     try:
-        await telegram_group.send_check_in(message.bot, name, branch, distance, time_str)
+        await telegram_group.send_check_in(message.bot, location.group_id, name, branch, distance, time_str)
     except Exception:
         logger.exception("Guruhga 'Keldi' xabarini yuborib bo'lmadi (branch=%s)", branch)
 
@@ -127,10 +128,10 @@ async def finalize_check_in(message: types.Message, state: FSMContext, distance:
     await reset_keep_branch(state)
 
 
-async def finalize_check_out(message: types.Message, state: FSMContext, distance: int):
+async def finalize_check_out(message: types.Message, state: FSMContext, distance: int, location: Location):
     data = await state.get_data()
     name = data.get("name")
-    branch = data.get("chosen_branch")
+    branch = location.name
     open_id = data.get("open_attendance_id")
 
     check_out_time = await db.create_check_out(open_id, distance) if open_id else None
@@ -152,7 +153,7 @@ async def finalize_check_out(message: types.Message, state: FSMContext, distance
     # Guruhga xabar timeout'da yiqilsa ham, chiqish allaqachon bazaga yozilgan —
     # xodimga tasdiq berish va FSM'ni tozalash BLOKLANMASLIGI kerak.
     try:
-        await telegram_group.send_check_out(message.bot, name, branch, distance, time_str, hours)
+        await telegram_group.send_check_out(message.bot, location.group_id, name, branch, distance, time_str, hours)
     except Exception:
         logger.exception("Guruhga 'Ketdi' xabarini yuborib bo'lmadi (branch=%s)", branch)
 

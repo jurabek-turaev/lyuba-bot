@@ -3,100 +3,129 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 
-from config import SAVDO_BRANCHES, FIXED_DEPARTMENTS
 import database as db
-
+from services import placement
 
 router = Router()
 router.message.filter(F.chat.type == "private")
 
-DEPARTMENT_OPTIONS = ["Savdo"] + FIXED_DEPARTMENTS
+SEND_VIDEO_TEXT = "Ishga kelganingizni tasdiqlash uchun dumaloq video (video_note) yuboring."
+STALE_BUTTON_TEXT = "Bu tugma eskirgan. /start ni qayta bosing."
 
 
-def get_department_keyboard():
+def get_department_keyboard(departments: list):
     builder = InlineKeyboardBuilder()
-    for dept in DEPARTMENT_OPTIONS:
-        builder.add(types.InlineKeyboardButton(text=dept, callback_data=f"dept_{dept}"))
+    for department in departments:
+        builder.add(types.InlineKeyboardButton(text=department.name, callback_data=f"dept:{department.id}"))
     builder.adjust(1)
     return builder.as_markup()
 
 
-def get_branch_keyboard():
+def get_location_keyboard(locations: list):
     builder = InlineKeyboardBuilder()
-    for branch in SAVDO_BRANCHES:
-        builder.add(types.InlineKeyboardButton(text=branch, callback_data=f"branch_{branch}"))
+    for location in locations:
+        builder.add(types.InlineKeyboardButton(text=location.name, callback_data=f"loc:{location.id}"))
     builder.adjust(1)
     return builder.as_markup()
+
+
+def _id_from(callback_data: str) -> int | None:
+    """"dept:3" -> 3; None for malformed data."""
+    try:
+        return int(callback_data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        return None
+
+
+async def _ask_department(message: types.Message):
+    departments = await placement.list_departments()
+    if not departments:
+        await message.answer("⚠️ Hozircha bo'limlar sozlanmagan. Iltimos, admin bilan bog'laning.")
+        return
+    await message.answer(
+        "Qaysi bo'limda ishlaysiz? (bu savol faqat birinchi marta beriladi)",
+        reply_markup=get_department_keyboard(departments),
+    )
+
+
+async def _offer_locations(message: types.Message, state: FSMContext, department, locations: list, prefix: str):
+    """One location: it is chosen automatically. Several: the employee chooses."""
+    if not locations:
+        await message.answer(
+            prefix + f"⚠️ «{department.name}» bo'limiga hali ish joyi biriktirilmagan. "
+            "Iltimos, admin bilan bog'laning."
+        )
+    elif len(locations) == 1:
+        await state.update_data(location_id=locations[0].id)
+        await message.answer(prefix + SEND_VIDEO_TEXT)
+    else:
+        await message.answer(
+            prefix + "Iltimos, ishlaydigan filialingizni tanlang:",
+            reply_markup=get_location_keyboard(locations),
+        )
 
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
 
-    department = await db.get_employee_department(message.from_user.id)
+    department, locations, _ = await placement.employee_placement(message.from_user.id)
 
     if department is None:
-        # Yangi xodim — bo'lim FAQAT bir marta so'raladi
+        # Yangi xodim (yoki bo'limi tozalangan / o'chirilgan) — bo'lim tanlanadi
         await message.answer("Assalomu alaykum! Lyuba korxonasi kadrlar tizimiga xush kelibsiz.")
-        await message.answer(
-            "Qaysi bo'limda ishlaysiz? (bu savol faqat birinchi marta beriladi)",
-            reply_markup=get_department_keyboard(),
-        )
+        await _ask_department(message)
         return
 
-    if department == "Savdo":
-        await message.answer(
-            "Iltimos, ishlaydigan do'koningizni tanlang:",
-            reply_markup=get_branch_keyboard(),
-        )
-    else:
-        # Ishlab chiqarish / Haydovchi / I.T.R — do'kon tanlash shart emas
-        await state.update_data(chosen_branch=department)
-        await message.answer(
-            f"Assalomu alaykum! ({department})\n"
-            "Ishga kelganingizni tasdiqlash uchun dumaloq video (video_note) yuboring."
-        )
+    await _offer_locations(message, state, department, locations, f"Assalomu alaykum! ({department.name})\n")
 
 
-@router.callback_query(F.data.startswith("dept_"))
+@router.callback_query(F.data.startswith("dept:"))
 async def department_chosen(callback_query: types.CallbackQuery, state: FSMContext):
-    department = callback_query.data[len("dept_"):]
+    user_id = callback_query.from_user.id
 
-    if department not in DEPARTMENT_OPTIONS:
-        await callback_query.answer("Noto'g'ri bo'lim.", show_alert=True)
+    current, _, _ = await placement.employee_placement(user_id)
+    if current is not None:
+        # An old department keyboard pressed again: the department is changed only by the admin
+        await callback_query.answer(f"Bo'limingiz allaqachon tanlangan: {current.name}", show_alert=True)
         return
 
-    await db.save_employee_department(callback_query.from_user.id, department)
+    department_id = _id_from(callback_query.data)
+    department = await placement.get_department(department_id) if department_id is not None else None
+    if department is None:
+        await callback_query.answer("Bu bo'lim endi mavjud emas. /start ni qayta bosing.", show_alert=True)
+        return
 
-    if department == "Savdo":
-        await callback_query.message.answer(
-            f"✅ Bo'lim saqlandi: {department}\n\n"
-            "Iltimos, ishlaydigan do'koningizni tanlang:",
-            reply_markup=get_branch_keyboard(),
-        )
-    else:
-        await state.update_data(chosen_branch=department)
-        await callback_query.message.answer(
-            f"✅ Bo'lim saqlandi: {department}\n\n"
-            "Ishga kelganingizni tasdiqlash uchun dumaloq video (video_note) yuboring."
-        )
-
+    await db.set_employee_department(user_id, department.id)
+    locations = await placement.department_locations(department.id)
+    await _offer_locations(
+        callback_query.message, state, department, locations, f"✅ Bo'lim saqlandi: {department.name}\n\n"
+    )
     await callback_query.answer()
 
 
-@router.callback_query(F.data.startswith("branch_"))
-async def process_branch_selection(callback_query: types.CallbackQuery, state: FSMContext):
-    branch_name = callback_query.data[len("branch_"):]
+@router.callback_query(F.data.startswith("loc:"))
+async def location_chosen(callback_query: types.CallbackQuery, state: FSMContext):
+    user_id = callback_query.from_user.id
+    location_id = _id_from(callback_query.data)
 
-    if branch_name not in SAVDO_BRANCHES:
-        await callback_query.answer("Noto'g'ri filial.", show_alert=True)
+    _, locations, _ = await placement.employee_placement(user_id)
+    location = next((loc for loc in locations if loc.id == location_id), None)
+    if location is None:
+        await callback_query.answer("Bu filial endi mavjud emas. /start ni qayta bosing.", show_alert=True)
         return
 
-    await state.update_data(chosen_branch=branch_name)
-    await db.save_employee_last_branch(callback_query.from_user.id, branch_name)
+    await state.update_data(location_id=location.id)
+    await db.set_employee_location(user_id, location.id)
 
     await callback_query.message.answer(
-        f"✅ Siz {branch_name} filialini tanladingiz.\n\n"
+        f"✅ Siz {location.name} filialini tanladingiz.\n\n"
         "Endi ishga kelganingizni tasdiqlash uchun dumaloq video (video_note) yuboring."
     )
     await callback_query.answer()
+
+
+# Keyboards sent before the switch to ids carried names ("dept_Savdo", "branch_Eski bozor")
+@router.callback_query(F.data.startswith("dept_") | F.data.startswith("branch_"))
+async def stale_name_button(callback_query: types.CallbackQuery):
+    await callback_query.answer(STALE_BUTTON_TEXT, show_alert=True)
