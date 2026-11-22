@@ -6,9 +6,9 @@ from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import ContentType, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-from config import WORK_LOCATIONS, MAX_DISTANCE, DEVELOPER_ID, SAVDO_BRANCHES
+from config import MAX_DISTANCE, DEVELOPER_ID
 import database as db
-from services import gps, telegram_group
+from services import gps, placement, telegram_group
 from .states import AttendanceState, reset_keep_branch
 from .attendance import finalize_check_in, finalize_check_out
 
@@ -107,32 +107,21 @@ async def handle_video(message: types.Message, state: FSMContext):
         await _process_video(message, state)
 
 
-async def _restore_branch(user_id: int):
-    """
-    Branch of the employee from the database. Used when FSM data is empty
-    (it lives in memory and is lost on a bot restart). None when unknown.
-    """
-    row = await db.get_employee_department_and_branch(user_id)
-    if row is None:
-        return None
-    department, last_branch = row
-    if department == "Savdo":
-        return last_branch if last_branch in SAVDO_BRANCHES else None
-    return department if department in WORK_LOCATIONS else None
-
-
 async def _process_video(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    branch_name = data.get("chosen_branch")
 
-    if not branch_name:
-        branch_name = await _restore_branch(message.from_user.id)
-        if branch_name:
-            await state.update_data(chosen_branch=branch_name)
+    # An open shift is finished where it started (even if that location was
+    # deactivated or unlinked since the check-in)
+    open_id = await db.get_open_attendance_id(message.from_user.id)
+    location = await placement.open_shift_location(open_id) if open_id else None
 
-    if not branch_name:
-        await message.answer("⚠️ Avval /start orqali filialni tanlang.")
-        return
+    if location is None:
+        # FSM data lives in memory: after a bot restart the location comes from the database
+        location = await placement.current_location(message.from_user.id, data.get("location_id"))
+        if location is None:
+            await message.answer("⚠️ Avval /start orqali filialni tanlang.")
+            return
+        await state.update_data(location_id=location.id)
 
     await state.update_data(video_id=message.video_note.file_id)
 
@@ -141,7 +130,7 @@ async def _process_video(message: types.Message, state: FSMContext):
     # Guruhga yuborib bo'lmasa (bot guruhdan chiqarilgan, tarmoq timeout va h.k.),
     # xatoni ushlab loglaymiz.
     asyncio.create_task(
-        _send_video_to_group(message.bot, branch_name, message.video_note.file_id)
+        _send_video_to_group(message.bot, location, message.video_note.file_id)
     )
 
     existing_name = await db.get_employee_name(message.from_user.id)
@@ -159,11 +148,11 @@ async def _process_video(message: types.Message, state: FSMContext):
         await show_attendance_choice(message, state, message.from_user.id)
 
 
-async def _send_video_to_group(bot, branch_name: str, video_id: str):
+async def _send_video_to_group(bot, location: placement.Location, video_id: str):
     try:
-        await telegram_group.send_video(bot, branch_name, video_id)
+        await telegram_group.send_video(bot, location.group_id, location.name, video_id)
     except Exception:
-        logger.exception("Guruhga video yuborib bo'lmadi (branch=%s)", branch_name)
+        logger.exception("Guruhga video yuborib bo'lmadi (branch=%s)", location.name)
 
 
 # ===========================
@@ -223,10 +212,14 @@ async def handle_location(message: types.Message, state: FSMContext):
     user_loc = (message.location.latitude, message.location.longitude)
     data = await state.get_data()
 
-    branch_name = data.get("chosen_branch")
     action = data.get("pending_action")
+    location = None
+    if action == "checkout" and data.get("open_attendance_id"):
+        location = await placement.open_shift_location(data["open_attendance_id"])
+    if location is None:
+        location = await placement.current_location(message.from_user.id, data.get("location_id"))
 
-    if not branch_name or branch_name not in WORK_LOCATIONS or not action:
+    if location is None or not action:
         await message.answer(
             "⚠️ Avval /start orqali qaytadan boshlang.",
             reply_markup=ReplyKeyboardRemove(),
@@ -234,8 +227,8 @@ async def handle_location(message: types.Message, state: FSMContext):
         await reset_keep_branch(state)
         return
 
-    target = WORK_LOCATIONS[branch_name]
-    dist = gps.distance_to_branch(user_loc, target)
+    branch_name = location.name
+    dist = gps.distance_to_branch(user_loc, {"lat": location.lat, "lon": location.lon})
 
     if dist > MAX_DISTANCE and message.from_user.id != DEVELOPER_ID:
         await message.answer(
@@ -247,6 +240,6 @@ async def handle_location(message: types.Message, state: FSMContext):
         return
 
     if action == "checkin":
-        await finalize_check_in(message, state, int(dist))
+        await finalize_check_in(message, state, int(dist), location)
     else:
-        await finalize_check_out(message, state, int(dist))
+        await finalize_check_out(message, state, int(dist), location)

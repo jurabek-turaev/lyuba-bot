@@ -46,6 +46,12 @@ async def send_help_message(message: types.Message):
         "bo'lim → xodim → boshlanish va tugash vaqti → oylik maosh → tasdiqlash.\n"
         "└ Qayta bajarilsa, eski qiymatlar yangisi bilan almashtiriladi.\n\n"
 
+        "🗂 <b>/filiallar</b>\n"
+        "└ Bo'lim va filiallarni boshqarish: yangi filial yoki bo'lim qo'shish, nomini, joylashuvini "
+        "(Telegram lokatsiyasi, Google/Yandex havolasi yoki koordinata), guruhini o'zgartirish, "
+        "bo'limlarga biriktirish, faolsizlantirish.\n"
+        "└ Guruh ro'yxatda bo'lishi uchun botni o'sha guruhga qo'shing — u avtomatik eslab qoladi.\n\n"
+
         "📋 <b>/menu</b>\n"
         "└ Hamma amallarni pastdagi doimiy tugmalar sifatida chiqaradi (buyruq yozish shart emas)."
     )

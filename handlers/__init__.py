@@ -2,6 +2,8 @@ from aiogram import Router
 
 from .menu import router as menu_router
 from .shift import router as shift_router
+from .catalog import router as catalog_router
+from .groups import router as groups_router
 from .application import router as application_router
 from .start import router as start_router
 from .location import router as location_router
@@ -17,10 +19,15 @@ router.callback_query.outer_middleware(AccessMiddleware())
 
 # menu_router goes first: a menu button pressed while the admin is typing something
 # (for example a salary) must not be taken as that input
+# Group chats only (bot added / removed, renamed, migrated): never sees private messages
+router.include_router(groups_router)
 router.include_router(menu_router)
 # shift_router goes next: while the admin types a salary, no catch-all text
 # handler of another router can take that message
 router.include_router(shift_router)
+# Same reason as shift_router: a typed name / location of the catalog wizard
+# must not reach the employee handlers
+router.include_router(catalog_router)
 # Must come BEFORE the employee routers: it takes /start and every other message of
 # users who are not approved, so the employee handlers below only see approved users
 router.include_router(application_router)
