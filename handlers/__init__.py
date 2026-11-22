@@ -4,6 +4,7 @@ from .menu import router as menu_router
 from .shift import router as shift_router
 from .catalog import router as catalog_router
 from .groups import router as groups_router
+from .interview import router as interview_router
 from .resume import router as resume_router
 from .application import router as application_router
 from .start import router as start_router
@@ -32,7 +33,10 @@ router.include_router(catalog_router)
 # Must come BEFORE the employee routers: they take /start and every other message of
 # users who are not approved, so the employee handlers below only see approved users.
 # resume_router (the candidate's form) goes first: application_router ends with the
-# catch-all handlers for unapproved users
+# catch-all handlers for unapproved users. interview_router (the admin's interview
+# wizard and the candidate's "another time" request) goes before both: its typed
+# answers must not reach their catch-alls
+router.include_router(interview_router)
 router.include_router(resume_router)
 router.include_router(application_router)
 router.include_router(start_router)

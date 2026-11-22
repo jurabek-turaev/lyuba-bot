@@ -46,6 +46,7 @@ from .application import (
     Unapproved,
     format_duration,
     notify_admin,
+    refresh_card,
     remaining_cooldown,
     send_application_card,
 )
@@ -744,6 +745,7 @@ async def withdraw(callback: types.CallbackQuery, bot: Bot):
     await bot.send_message(callback.from_user.id,
                            "↩️ Arizangiz qaytarib olindi. Xohlasangiz, /start bosib yangisini yuborishingiz mumkin.")
     await notify_admin(bot, f"↩️ Ariza #{app_id}: <b>{escape(app['full_name'])}</b> arizasini qaytarib oldi.")
+    await refresh_card(bot, app_id)
 
 
 @router.callback_query(F.data.startswith("rf:"), Unapproved())

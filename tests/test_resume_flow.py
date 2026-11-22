@@ -126,7 +126,7 @@ class ResumeFlowTests(FlowTestCase):
         self.assertEqual(len(card), 1)
         self.assertEqual(card[0]["file"], preview[0]["file"])
         self.assertSent(card, "Ariza #1", "Savdo", "28 yosh", "Qarshi shahri", "+998901234567",
-                        "5 000 000 so'm", "Darhol", "Oliy", "2 ish joyi", "review:ok:1")
+                        "5 000 000 so'm", "Darhol", "Oliy", "2 ish joyi", "hr:inv:1", "hr:no:1")
 
         app = await db.get_application_details(1)
         self.assertEqual((app["kind"], app["status"], app["department_id"]),
@@ -222,7 +222,7 @@ class ResumeFlowTests(FlowTestCase):
         sent = await self.fill_form()
         self.assertSent(sent, "PDF tayyorlashda xatolik", "rf:preview:send")
         sent = await self.press(USER, "rf:preview:send")
-        self.assertSent(self.sent_to(sent, OWNER), "Ariza #1", "review:ok:1")
+        self.assertSent(self.sent_to(sent, OWNER), "Ariza #1", "hr:inv:1")
         self.assertEqual((await db.get_application_details(1))["resume_file_id"], None)
 
     async def test_upload_own_resume(self):

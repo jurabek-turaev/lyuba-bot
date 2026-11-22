@@ -120,7 +120,8 @@ class RegistrationTests(FlowTestCase):
         self.assertTrue(card, "the admin gets the application card with the resume file")
         app_id = (await db.get_pending_applications())[0][0]
 
-        self.assertSent(self.sent_to(await self.press(OWNER, f"review:ok:{app_id}"), user), "tasdiqlandi")
+        self.assertSent(await self.press(OWNER, f"hr:hire:{app_id}"), f"hr:hire_ok:{app_id}")  # confirmation
+        self.assertSent(self.sent_to(await self.press(OWNER, f"hr:hire_ok:{app_id}"), user), "Tabriklaymiz")
 
         # the department is the position from the application: no question, Zavod chosen automatically
         sent = await self.send(user, text="/start")
@@ -130,7 +131,9 @@ class RegistrationTests(FlowTestCase):
     async def test_old_style_employee_without_department_still_chooses_it(self):
         user = 2004
         app_id = await db.create_application(user, "Ali Valiyev", "+998901234567", None)
-        self.assertSent(self.sent_to(await self.press(OWNER, f"review:ok:{app_id}"), user), "tasdiqlandi")
+        # a card sent by the old version: its "approve" button now asks for a confirmation
+        self.assertSent(await self.press(OWNER, f"review:ok:{app_id}"), f"hr:hire_ok:{app_id}")
+        self.assertSent(self.sent_to(await self.press(OWNER, f"hr:hire_ok:{app_id}"), user), "Tabriklaymiz")
 
         sent = await self.send(user, text="/start")
         self.assertSent(sent, "Qaysi bo'limda ishlaysiz", f"dept:{await self.department_id('Haydovchi')}")

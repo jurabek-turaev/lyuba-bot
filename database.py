@@ -540,6 +540,7 @@ _HR_COLUMNS = [
     ("interview_note", "TEXT"),
     ("invited_at", "TEXT"),
     ("reminder_sent_at", "TEXT"),
+    ("result_asked_at", "TEXT"),         # the admin was asked "how did the interview go?"
     ("reschedule_request", "TEXT"),      # the candidate's wish when asking for another time
     ("reschedule_requested_at", "TEXT"),
     ("reject_reason", "TEXT"),           # internal only, never shown to the candidate
@@ -550,7 +551,8 @@ _APPLICATION_SELECT = """
            COALESCE(kind, 'legacy') AS kind, department_id, position, expected_salary,
            start_availability, resume_data, resume_file_id, resume_file_name, resume_file_type,
            card_message_id, interview_at, interview_place, interview_location_id, interview_note,
-           invited_at, reminder_sent_at, reschedule_request, reschedule_requested_at, reject_reason
+           invited_at, reminder_sent_at, result_asked_at, reschedule_request, reschedule_requested_at,
+           reject_reason
     FROM applications
 """
 
@@ -838,7 +840,8 @@ async def invite_to_interview(app_id: int, interview_at: str, place: str,
         """UPDATE applications SET
                status = 'invited', interview_at = ?, interview_place = ?,
                interview_location_id = ?, interview_note = ?, invited_at = ?,
-               reminder_sent_at = NULL, reschedule_request = NULL, reschedule_requested_at = NULL
+               reminder_sent_at = NULL, result_asked_at = NULL,
+               reschedule_request = NULL, reschedule_requested_at = NULL
            WHERE id = ? AND status IN ('pending', 'invited')""",
         (interview_at, place, location_id, note, _now_str(), app_id),
     )
@@ -877,6 +880,26 @@ async def mark_reminder_sent(app_id: int) -> bool:
            WHERE id = ? AND status = 'invited' AND reminder_sent_at IS NULL""",
         (_now_str(), app_id),
     )
+
+
+async def mark_result_asked(app_id: int) -> bool:
+    """False when the admin was already asked about this interview."""
+    return await _update_application(
+        """UPDATE applications SET result_asked_at = ?
+           WHERE id = ? AND status = 'invited' AND result_asked_at IS NULL""",
+        (_now_str(), app_id),
+    )
+
+
+async def get_interviews_without_result(now: str) -> list:
+    """Invited applications whose interview time ("YYYY-MM-DD HH:MM") has passed and the admin was not asked yet."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            _APPLICATION_SELECT
+            + " WHERE status = 'invited' AND interview_at <= ? AND result_asked_at IS NULL ORDER BY interview_at",
+            (now,),
+        )
+        return [_application_dict(cursor, row) for row in await cursor.fetchall()]
 
 
 async def approve_application(app_id: int):
