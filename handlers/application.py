@@ -38,7 +38,7 @@ router.message.filter(F.chat.type == "private")
 
 MIN_NAME_LEN = 3
 MAX_NAME_LEN = 100
-REAPPLY_COOLDOWN = timedelta(hours=24)  # a rejected applicant may apply again after this
+REAPPLY_COOLDOWN = timedelta(days=7)  # a rejected / no-show applicant may apply again after this
 MAX_PENDING_SHOWN = 10
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -91,6 +91,9 @@ def _remaining_cooldown(decided_at: str | None) -> timedelta:
 def _format_duration(delta: timedelta) -> str:
     minutes_total = int(delta.total_seconds() // 60) + 1  # round up
     hours, minutes = divmod(minutes_total, 60)
+    if hours >= 24:
+        days, hours = divmod(hours, 24)
+        return f"{days} kun {hours} soat" if hours else f"{days} kun"
     return f"{hours} soat {minutes} daqiqa" if hours else f"{minutes} daqiqa"
 
 
@@ -104,12 +107,12 @@ async def start_application(message: types.Message, state: FSMContext):
     latest = await db.get_latest_application(message.from_user.id)
     if latest is not None:
         _, status, decided_at = latest
-        if status == "pending":
+        if status in db.ACTIVE_STATUSES:
             await message.answer(PENDING_TEXT)
             return
-        if status == "blocked":
+        if status == db.STATUS_BLOCKED:
             return  # blocked users get no answer at all
-        if status == "rejected":
+        if status in (db.STATUS_REJECTED, db.STATUS_NO_SHOW):
             left = _remaining_cooldown(decided_at)
             if left > timedelta(0):
                 await message.answer(
@@ -292,7 +295,7 @@ async def review_application(callback: types.CallbackQuery, bot: Bot):
     elif action == "no":
         done = await db.decide_application(app_id, "rejected")
         verdict = "❌ Rad etildi"
-        applicant_text = "❌ Arizangiz rad etildi. 24 soatdan keyin qayta ariza yuborishingiz mumkin."
+        applicant_text = "❌ Arizangiz rad etildi. 7 kundan keyin qayta ariza yuborishingiz mumkin."
     else:  # "ban"
         done = await db.decide_application(app_id, "blocked")
         verdict = "🚫 Bloklandi"
@@ -350,7 +353,7 @@ async def unblock_applicant(message: types.Message, command: CommandObject):
 @router.message(Unapproved())
 async def unapproved_message(message: types.Message):
     latest = await db.get_latest_application(message.from_user.id)
-    if latest is not None and latest[1] == "pending":
+    if latest is not None and latest[1] in db.ACTIVE_STATUSES:
         await message.answer(PENDING_TEXT)
         return
     logger.info("Message from an unapproved user ignored (user_id=%s)", message.from_user.id)
