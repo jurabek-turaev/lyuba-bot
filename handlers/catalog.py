@@ -102,7 +102,8 @@ def _clean_name(text: str) -> str:
 
 
 def _map_link(lat: float, lon: float) -> str:
-    return f'<a href="https://www.google.com/maps?q={lat},{lon}">xaritada ochish</a>'
+    # Yandex puts LONGITUDE first; pt = a marker on the point
+    return f'<a href="https://yandex.uz/maps/?pt={lon},{lat}&amp;z=17&amp;l=map">xaritada ochish</a>'
 
 
 async def _group_label(group_id: int | None) -> str:
@@ -682,7 +683,10 @@ async def on_point(message: types.Message, state: FSMContext, bot: Bot):
 
     # Show the point on a map so the admin can check it before it is saved
     await bot.send_location(message.chat.id, latitude=lat, longitude=lon)
-    text = f"🌐 <b>{escape(draft['name'])}</b>\nNuqta yuqoridagi xaritada: <code>{lat}, {lon}</code>"
+    text = (
+        f"🌐 <b>{escape(draft['name'])}</b>\nNuqta yuqoridagi xaritada: <code>{lat}, {lon}</code>\n"
+        f"🗺 Yandex'da tekshirish: {_map_link(lat, lon)}"
+    )
     if draft.get("old_lat") is not None:
         moved = gps.distance_to_branch((lat, lon), {"lat": draft["old_lat"], "lon": draft["old_lon"]})
         text += f"\n📏 Eski joydan {int(moved)} metr uzoqda."

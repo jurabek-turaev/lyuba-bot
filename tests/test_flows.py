@@ -240,6 +240,7 @@ class CatalogTests(FlowTestCase):
         self.assertSent(await self.send(OWNER, text="https://example.com/?q=38.8,65.7"), "Faqat Google yoki Yandex")
         sent = await self.send(OWNER, text=YANDEX_LINK)
         self.assertIn({"type": "pin", "lat": 38.829001, "lon": 65.793878}, sent)
+        self.assertSent(sent, "https://yandex.uz/maps/?pt=65.793878,38.829001")  # link to check the point
 
         await self.bot_added_to_group(-100333, "Qarshi guruhi")
         sent = await self.press(OWNER, "ct:ptok")
@@ -247,7 +248,7 @@ class CatalogTests(FlowTestCase):
         await self.press(OWNER, "ct:g:-100333")
         await self.press(OWNER, f"ct:chk:{await self.department_id('Savdo')}")
         sent = await self.press(OWNER, "ct:chkok")
-        self.assertSent(sent, "Filial yaratildi", "Qarshi guruhi", "Bo'limlar: Savdo")
+        self.assertSent(sent, "Filial yaratildi", "Qarshi guruhi", "Bo'limlar: Savdo", "yandex.uz/maps/?pt=")
         self.assertSent(await self.press(OWNER, "ct:chkok"), "eskirgan")  # double tap
 
         shop = await self.location_id("Qarshi do'koni")
