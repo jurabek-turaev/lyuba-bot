@@ -5,7 +5,9 @@ video tasdig'i bilan qayd qiluvchi tizim. Oy oxirida `/tabel` orqali Excel hisob
 
 ## Imkoniyatlari
 
-- Ariza orqali ro'yxatdan o'tish: ism + telefon → admin tasdiqlaydi / rad etadi / bloklaydi
+- Ishga ariza: nomzod botda anketa to'ldiradi (bot undan PDF rezyume yasaydi) yoki tayyor
+  rezyumesini yuboradi → admin kartani oladi va tasdiqlaydi / rad etadi / bloklaydi.
+  Tugallanmagan anketa bazada saqlanadi — bot qayta ishga tushsa ham yo'qolmaydi
 - Bo'lim va filiallarni admin botning o'zida boshqaradi (yaratish, tahrirlash, faolsizlantirish)
 - Bo'limda bitta filial bo'lsa — xodimga avtomatik, bir nechta bo'lsa — xodim o'zi tanlaydi
 - Dumaloq video (video_note) tasdig'i — filialga biriktirilgan guruhga avtomatik yuboriladi

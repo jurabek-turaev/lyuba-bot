@@ -186,16 +186,16 @@ class ReapplyCooldownTests(FlowTestCase):
 
     async def test_after_a_week_the_candidate_may_apply_again(self):
         await self._rejected("rejected", 7.1)
-        self.assertSent(await self.send(self.USER, text="/start"), "Ism va Familiyangizni")
+        self.assertSent(await self.send(self.USER, text="/start"), "Shunga rozimisiz")
 
     async def test_unblocked_user_may_apply_at_once(self):
         app_id = await db.create_application(self.USER, "Ali Valiyev", "+998901234567", None)
         await db.decide_application(app_id, "blocked")
         self.assertEqual(await self.send(self.USER, text="/start"), [])
         self.assertTrue(await db.unblock_user(self.USER))
-        self.assertSent(await self.send(self.USER, text="/start"), "Ism va Familiyangizni")
+        self.assertSent(await self.send(self.USER, text="/start"), "Shunga rozimisiz")
 
     async def test_invited_candidate_sees_the_pending_message(self):
         app_id = await db.create_application(self.USER, "Ali Valiyev", "+998901234567", None)
         await db.invite_to_interview(app_id, "2026-11-25 10:00", "Ofis")
-        self.assertSent(await self.send(self.USER, text="/start"), "ko'rib chiqilmoqda")
+        self.assertSent(await self.send(self.USER, text="/start"), "suhbatga taklif", "rw:")

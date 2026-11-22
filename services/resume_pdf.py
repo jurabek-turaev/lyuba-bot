@@ -131,7 +131,7 @@ def build_cv(form: dict, photo_file: str | None = None, today: date | None = Non
 
     skills = []
     languages = [
-        f"{md(lang['name'])} ({md(lang['level'])})" if lang.get("level") else md(lang["name"])
+        f"{md(lang['name'])} ({md(lang['level']).lower()})" if lang.get("level") else md(lang["name"])
         for lang in form.get("languages") or []
     ]
     if languages:

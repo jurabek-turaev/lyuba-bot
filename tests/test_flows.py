@@ -106,16 +106,30 @@ class MigrationTests(FlowTestCase):
 class RegistrationTests(FlowTestCase):
     async def test_application_approval_and_department_choice(self):
         user = 2001
-        self.assertSent(await self.send(user, text="/start"), "admin tasdig'i kerak")
-        self.assertSent(await self.send(user, text="Ali Valiyev"), "Telefon raqamni yuborish")
-        sent = await self.send(user, contact={"phone_number": "998901234567", "first_name": "Ali", "user_id": user})
-        self.assertSent(sent, "apply:send")
+        self.assertSent(await self.send(user, text="/start"), "rf:consent:y")
+        await self.press(user, "rf:consent:y")
+        self.assertSent(await self.press(user, "rf:choose:upload"), "Rezyume faylingizni")
+        await self.send(user, document={"file_id": "cv", "file_unique_id": "cv", "file_name": "cv.pdf"})
+        await self.send(user, text="Valiyev Ali")
+        await self.send(user, contact={"phone_number": "998901234567", "first_name": "Ali", "user_id": user})
+        await self.press(user, f"rf:position:{await self.department_id('Haydovchi')}")
+        await self.send(user, text="4 000 000")
+        self.assertSent(await self.press(user, "rf:start_availability:0"), "rf:preview:send")
 
-        sent = await self.press(user, "apply:send")
-        card = self.sent_to(sent, OWNER)
-        self.assertTrue(card, "the admin gets the application card")
+        card = self.sent_to(await self.press(user, "rf:preview:send"), OWNER, "doc")
+        self.assertTrue(card, "the admin gets the application card with the resume file")
         app_id = (await db.get_pending_applications())[0][0]
 
+        self.assertSent(self.sent_to(await self.press(OWNER, f"review:ok:{app_id}"), user), "tasdiqlandi")
+
+        # the department is the position from the application: no question, Zavod chosen automatically
+        sent = await self.send(user, text="/start")
+        self.assertNotSent(sent, "Qaysi bo'limda ishlaysiz")
+        self.assertSent(await self.send(user, **self.VIDEO), "Keldim")
+
+    async def test_old_style_employee_without_department_still_chooses_it(self):
+        user = 2004
+        app_id = await db.create_application(user, "Ali Valiyev", "+998901234567", None)
         self.assertSent(self.sent_to(await self.press(OWNER, f"review:ok:{app_id}"), user), "tasdiqlandi")
 
         sent = await self.send(user, text="/start")
