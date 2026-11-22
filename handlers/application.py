@@ -8,7 +8,9 @@ handlers/resume.py. Here:
         pending: invite to an interview / reject / block
         invited: hire / reject / move the interview / did not come / block
       hire, no-show and block ask for a confirmation; reject: reason -> the letter,
-    - /arizalar lists the pending ones, /blokdan_chiqar <user_id> lifts a block,
+    - "📝 Arizalar" / /arizalar: how many wait in each section (new, waiting for the
+      interview, today's interviews); a section button sends its cards,
+    - /blokdan_chiqar <user_id> lifts a block,
     - the catch-all handlers for users who are not approved (must stay LAST).
 
 The interview wizard (invite / move) is in handlers/interview.py.
@@ -401,20 +403,62 @@ async def old_card_button(callback: types.CallbackQuery, bot: Bot):
         await callback.answer()
 
 
+# ===========================
+# "📝 Arizalar": applications by section
+# ===========================
+SECTIONS = {
+    "new": "⏳ Yangi",
+    "invited": "📅 Suhbat kutilmoqda",
+    "today": "📋 Bugungi suhbatlar",
+}
+
+
+async def _section(name: str) -> list:
+    """Applications of a section; interviews are sorted by their time."""
+    if name == "new":
+        return await db.list_applications([db.STATUS_PENDING])
+    if name == "invited":
+        return sorted(await db.list_applications([db.STATUS_INVITED]), key=lambda app: app["interview_at"] or "")
+    today = datetime.now().date()
+    return await db.get_interviews_between(f"{today:%Y-%m-%d} 00:00",
+                                           f"{today + timedelta(days=1):%Y-%m-%d} 00:00")
+
+
 @router.message(Command("arizalar"), F.from_user.id == OWNER_ID)
 async def list_pending_applications(message: types.Message, bot: Bot):
-    pending = await db.get_pending_applications()
-    if not pending:
-        await message.answer("Kutilayotgan ariza yo'q.")
+    """The overview: how many applications wait in each section, a button opens one."""
+    counts = {name: len(await _section(name)) for name in SECTIONS}
+    lines = ["📝 <b>Arizalar</b>", ""]
+    lines += [f"{label}: <b>{counts[name]}</b>" for name, label in SECTIONS.items()]
+
+    today = await _section("today")
+    if today:
+        lines += ["", "<b>Bugun:</b>"]
+        lines += [f"🕙 {app['interview_at'][11:]} — {escape(app['full_name'])}"
+                  f" · {escape(app['position'] or '—')} · {escape(app['interview_place'] or '—')}"
+                  for app in today]
+    if not any(counts.values()):
+        lines += ["", "Hozircha javob kutayotgan ariza yo'q."]
+
+    buttons = [[_btn(f"{label} ({counts[name]})", f"al:{name}")] for name, label in SECTIONS.items()]
+    await message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+                         parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("al:"), F.from_user.id == OWNER_ID)
+async def open_section(callback: types.CallbackQuery, bot: Bot):
+    name = callback.data.split(":")[1]
+    apps = await _section(name) if name in SECTIONS else []
+    if not apps:
+        await callback.answer("Bu bo'limda ariza yo'q.", show_alert=True)
         return
-
-    for app in pending[:MAX_PENDING_SHOWN]:
-        await send_application_card(bot, app[0])
-
-    if len(pending) > MAX_PENDING_SHOWN:
-        await message.answer(
-            f"Yana {len(pending) - MAX_PENDING_SHOWN} ta ariza bor. "
-            "Avvalgilarini ko'rib chiqqach, /arizalar ni qayta yuboring."
+    await callback.answer()
+    for app in apps[:MAX_PENDING_SHOWN]:
+        await send_application_card(bot, app["id"])
+    if len(apps) > MAX_PENDING_SHOWN:
+        await callback.message.answer(
+            f"Yana {len(apps) - MAX_PENDING_SHOWN} ta ariza bor. "
+            "Avvalgilarini ko'rib chiqqach, bo'limni qayta oching."
         )
 
 

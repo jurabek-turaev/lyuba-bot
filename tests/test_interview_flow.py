@@ -54,7 +54,9 @@ class HelperTests(unittest.TestCase):
                 interview.parse_day(bad, today)
 
 
-class InterviewFlowTests(FlowTestCase):
+class HiringTestCase(FlowTestCase):
+    """One new application (a PDF resume for Savdo) and its card already sent to the admin."""
+
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.app_id = await db.submit_application(
@@ -72,6 +74,8 @@ class InterviewFlowTests(FlowTestCase):
         await self.query("UPDATE applications SET invited_at = ? WHERE id = ?",
                          (datetime.now() - invited_ago).strftime("%Y-%m-%d %H:%M:%S"), self.app_id)
 
+
+class InterviewFlowTests(HiringTestCase):
     async def test_invite_wizard(self):
         a = self.app_id
         sent = await self.press(OWNER, f"hr:inv:{a}")
@@ -235,3 +239,48 @@ class InterviewFlowTests(FlowTestCase):
     async def test_candidate_withdrawal_updates_the_card(self):
         await self.press(USER, f"rw:{self.app_id}:yes")
         self.assertSent(self.log, "qaytarib oldi", "Kadr arizani qaytarib oldi")
+
+
+class ApplicationsMenuTests(HiringTestCase):
+    async def test_sections(self):
+        # one new application (from setUp) and two invited: later today and in 3 days
+        second = await db.submit_application(
+            USER + 1, None, kind=db.KIND_UPLOAD, full_name="Karimov Bek", phone="+998911112233",
+            department_id=await self.department_id("Haydovchi"), expected_salary=6_000_000,
+            resume_file_id="scan", resume_file_type="photo")
+        third = await db.submit_application(
+            USER + 2, None, kind=db.KIND_UPLOAD, full_name="Toshev Sardor", phone="+998931112233",
+            department_id=await self.department_id("Savdo"), expected_salary=3_000_000,
+            resume_file_id="doc", resume_file_name="cv.pdf", resume_file_type="document")
+        later_today = (datetime.now() + timedelta(minutes=5)).replace(second=0, microsecond=0)
+        if later_today.date() != date.today():
+            later_today = datetime.now().replace(second=0, microsecond=0)
+        await db.invite_to_interview(second, _minute(later_today), "Zavod")
+        await db.invite_to_interview(third, _minute(datetime.now() + timedelta(days=3)), "Ofis")
+
+        sent = await self.send(OWNER, text="📝 Arizalar")
+        self.assertSent(sent, "⏳ Yangi: <b>1</b>", "📅 Suhbat kutilmoqda: <b>2</b>",
+                        "📋 Bugungi suhbatlar: <b>1</b>", "Karimov Bek · Haydovchi · Zavod", "al:today")
+
+        new = self.sent_to(await self.press(OWNER, "al:new"), OWNER, "doc")
+        self.assertEqual(len(new), 1)
+        self.assertSent(new, "Valiyev Ali", f"hr:inv:{self.app_id}")
+
+        invited = await self.press(OWNER, "al:invited")
+        cards = [e for e in invited if e["type"] in ("doc", "photo")]
+        self.assertEqual([c["caption"].split("\n")[0] for c in cards],
+                         [f"📝 <b>Ariza #{second}</b> · Haydovchi", f"📝 <b>Ariza #{third}</b> · Savdo"])
+        self.assertSent(cards, f"hr:hire:{second}", "Suhbat:")
+
+        today = await self.press(OWNER, "al:today")
+        self.assertEqual(len([e for e in today if e["type"] == "photo"]), 1)
+
+        await db.reject_application(self.app_id)
+        self.assertSent(await self.press(OWNER, "al:new"), "ariza yo'q")
+
+    async def test_empty_overview(self):
+        await db.reject_application(self.app_id)
+        self.assertSent(await self.send(OWNER, text="/arizalar"), "Hozircha javob kutayotgan ariza yo'q")
+
+    async def test_help_mentions_the_hiring_flow(self):
+        self.assertSent(await self.send(OWNER, text="/help"), "suhbat kutilmoqda", "18:00")
