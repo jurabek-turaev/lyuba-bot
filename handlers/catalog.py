@@ -133,6 +133,21 @@ async def _refresh_group_titles(bot: Bot):
             pass
 
 
+async def _delete_pin(bot: Bot, draft: dict):
+    """
+    Remove the map preview sent for the point confirmation. It is only needed
+    while the admin decides; afterwards it just clutters the chat.
+    """
+    message_id = draft.pop("pin_message_id", None)
+    chat_id = draft.pop("pin_chat_id", None)
+    if message_id is None:
+        return
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except TelegramBadRequest:
+        pass  # already deleted by the admin, or older than 48 hours
+
+
 async def _departments_losing_last_location(location_id: int, keep_ids=None) -> list:
     """
     Names of active departments with active employees whose ONLY active location is
@@ -677,12 +692,14 @@ async def on_point(message: types.Message, state: FSMContext, bot: Bot):
             return
 
     lat, lon = round(coordinates[0], 7), round(coordinates[1], 7)
-    draft.update(lat=lat, lon=lon, step="point_confirm")
+    await _delete_pin(bot, draft)  # a preview of an earlier attempt, if any
+
+    # Show the point on a map so the admin can check it before it is saved;
+    # the preview is deleted as soon as the admin answers
+    pin = await bot.send_location(message.chat.id, latitude=lat, longitude=lon)
+    draft.update(lat=lat, lon=lon, step="point_confirm", pin_message_id=pin.message_id, pin_chat_id=pin.chat.id)
     await state.set_state(CatalogState.browsing)
     await state.update_data(draft=draft)
-
-    # Show the point on a map so the admin can check it before it is saved
-    await bot.send_location(message.chat.id, latitude=lat, longitude=lon)
     text = (
         f"🌐 <b>{escape(draft['name'])}</b>\nNuqta yuqoridagi xaritada: <code>{lat}, {lon}</code>\n"
         f"🗺 Yandex'da tekshirish: {_map_link(lat, lon)}"
@@ -721,6 +738,7 @@ async def on_point_ok(callback: types.CallbackQuery, state: FSMContext, bot: Bot
     draft = await _draft_for(callback, state, "point_confirm")
     if draft is None:
         return
+    await _delete_pin(bot, draft)
     if draft["action"] == "point":
         await db.update_location_coordinates(draft["id"], draft["lat"], draft["lon"])
         await _finish(bot, state, draft["back"], source=callback.message)
@@ -734,6 +752,7 @@ async def on_point_redo(callback: types.CallbackQuery, state: FSMContext, bot: B
     draft = await _draft_for(callback, state, "point_confirm")
     if draft is None:
         return
+    await _delete_pin(bot, draft)
     await _ask_point(bot, state, draft, source=callback.message)
     await callback.answer()
 
@@ -834,6 +853,7 @@ async def on_check_save(callback: types.CallbackQuery, state: FSMContext, bot: B
 @router.callback_query(F.data == "ct:cancel")
 async def on_cancel(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
     draft = (await state.get_data()).get("draft") or {}
+    await _delete_pin(bot, draft)
     await _finish(bot, state, draft.get("back", "ct:home"), source=callback.message)
     await callback.answer("Bekor qilindi")
 

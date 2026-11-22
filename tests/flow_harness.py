@@ -13,7 +13,7 @@ from datetime import datetime
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import (
-    AnswerCallbackQuery, EditMessageReplyMarkup, EditMessageText, GetChat, SendChatAction,
+    AnswerCallbackQuery, DeleteMessage, EditMessageReplyMarkup, EditMessageText, GetChat, SendChatAction,
     SendLocation, SendMessage, SendVideoNote,
 )
 from aiogram.types import Chat, ChatFullInfo, Message, Update
@@ -45,6 +45,7 @@ class FakeSession(BaseSession):
         super().__init__()
         self.log = log
         self.group_titles = group_titles
+        self._next_message_id = 1000
 
     async def make_request(self, bot, method, timeout=None):
         if isinstance(method, SendMessage):
@@ -56,6 +57,12 @@ class FakeSession(BaseSession):
             self.log.append({"type": "video", "chat": method.chat_id})
         elif isinstance(method, SendLocation):
             self.log.append({"type": "pin", "lat": method.latitude, "lon": method.longitude})
+            self._next_message_id += 1
+            return Message(message_id=self._next_message_id, date=datetime.now(),
+                           chat=Chat(id=method.chat_id, type="private"))
+        elif isinstance(method, DeleteMessage):
+            self.log.append({"type": "delete", "chat": method.chat_id, "message_id": method.message_id})
+            return True
         elif isinstance(method, AnswerCallbackQuery):
             if method.text:
                 self.log.append({"type": "alert", "text": method.text})

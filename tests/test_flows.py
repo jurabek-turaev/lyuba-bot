@@ -371,6 +371,28 @@ class CatalogTests(FlowTestCase):
         self.assertSent(sent, "Kelganingiz qayd etildi")
         self.assertFalse([e for e in sent if e.get("type") in ("msg", "video") and e.get("chat") != 4007])
 
+    async def test_map_preview_is_deleted_once_the_admin_answers(self):
+        deleted = lambda entries: [e for e in entries if e["type"] == "delete"]
+        zavod = await self.location_id("Zavod")
+
+        # "Qayta yuborish": the old preview goes away, the new point gets a new one
+        await self.press(OWNER, f"ct:lpoint:{zavod}")
+        await self.send(OWNER, text="38.81, 65.71")
+        self.assertEqual(deleted(await self.press(OWNER, "ct:ptredo")), [{"type": "delete", "chat": OWNER, "message_id": 1001}])
+        await self.send(OWNER, text="38.82, 65.72")
+        # "To'g'ri"
+        self.assertEqual(deleted(await self.press(OWNER, "ct:ptok")), [{"type": "delete", "chat": OWNER, "message_id": 1002}])
+
+        # "Bekor qilish"
+        await self.press(OWNER, f"ct:lpoint:{zavod}")
+        await self.send(OWNER, text="38.83, 65.73")
+        self.assertEqual(deleted(await self.press(OWNER, "ct:cancel")), [{"type": "delete", "chat": OWNER, "message_id": 1003}])
+        self.assertEqual((await db.get_location(zavod))[2:4], (38.82, 65.72))  # the cancelled point is not saved
+
+        # cancel with no preview on screen deletes nothing
+        await self.press(OWNER, f"ct:lpoint:{zavod}")
+        self.assertEqual(deleted(await self.press(OWNER, "ct:cancel")), [])
+
     async def test_wizard_buttons_are_stale_after_a_restart(self):
         await self.press(OWNER, f"ct:lpoint:{await self.location_id('Zavod')}")
         self.restart()
