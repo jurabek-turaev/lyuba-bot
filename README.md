@@ -106,6 +106,7 @@ cp .env.example .env
 | `DEVELOPER_ID` | Dasturchining Telegram ID'si (test uchun masofa tekshiruvidan ozod) |
 | `MAX_DISTANCE` | Ruxsat etilgan masofa (metr), barcha filiallar uchun, masalan `200` |
 | `MAX_SHIFT_HOURS` | Maksimal smena (soat), masalan `12` |
+| `RESUME_RENDERER_PYTHON` | *Ixtiyoriy.* RenderCV o'rnatilgan python yo'li (rezyume PDF'i uchun). Docker'da kerak emas |
 | `GROUP_ID`, `PRODUCTION_LAT`, `PRODUCTION_LON`, `PRODUCTION_GROUP_ID` | *Ixtiyoriy.* Faqat eski bazani ko'chirish uchun (pastga qarang). Yangi o'rnatishda bo'sh qoldiring |
 
 ### Eski versiyadan yangilash
@@ -155,6 +156,18 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python bot.py
 ```
+
+**Rezyume PDF'i (RenderCV)** botdan alohida virtualenv'da ishlaydi — aiogram 3.13 bilan
+pydantic versiyasi to'qnashadi. Docker'da u avtomatik o'rnatiladi (`/opt/rendercv`).
+Lokal ishlatish uchun bir marta:
+
+```bash
+python -m venv .venv-rendercv
+.venv-rendercv/bin/pip install -r requirements-rendercv.txt
+```
+
+Bot `.venv-rendercv` ni o'zi topadi; boshqa joyga o'rnatsangiz, `.env` da
+`RESUME_RENDERER_PYTHON` ga o'sha python yo'lini yozing.
 
 ---
 

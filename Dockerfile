@@ -11,6 +11,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# RenderCV (rezyume PDF'i) — ALOHIDA virtualenv'da: aiogram 3.13 pydantic<2.10 ni,
+# RenderCV esa pydantic>=2.12 ni talab qiladi. Bot uni /opt/rendercv/bin/python
+# orqali alohida jarayon qilib chaqiradi (services/resume_pdf.py). Kam o'zgargani
+# uchun birinchi qatlam — keshdan olinadi.
+COPY requirements-rendercv.txt .
+RUN python -m venv /opt/rendercv \
+    && /opt/rendercv/bin/pip install --no-cache-dir -r requirements-rendercv.txt
+
 # Avval faqat requirements — Docker layer keshidan foydalanish uchun
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
