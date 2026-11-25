@@ -192,6 +192,20 @@ class AttendanceTests(FlowTestCase):
         self.assertSent(sent, "Ketganingiz qayd etildi")
         self.assertSent(self.sent_to(sent, SAVDO_GROUP), "Ketdi", "Ishlagan vaqti")
 
+    async def test_group_card_names_the_department_of_a_shared_location(self):
+        # Ishlab chiqarish, Haydovchi and I.T.R all work at Zavod: the card must say who it is
+        await self.make_employee(3010, "Zavod Xodim", "Haydovchi")
+        await self.send(3010, text="/start")
+        sent = await self.check_in(3010, ZAVOD_POINT)
+        self.assertSent(self.sent_to(sent, ZAVOD_GROUP), "Bo'lim: Haydovchi", "Filial: Zavod", "Keldi")
+        sent = await self.check_out(3010, ZAVOD_POINT)
+        self.assertSent(self.sent_to(sent, ZAVOD_GROUP), "Bo'lim: Haydovchi", "Filial: Zavod", "Ketdi")
+
+        await self.query("UPDATE attendance SET check_out_time = NULL, checkout_requested_at = '2026-01-01 10:00:00'")
+        start = len(self.log)
+        await auto_close._check_and_close(self.bot)
+        self.assertSent(self.sent_to(self.log[start:], ZAVOD_GROUP), "Avtomatik yopildi", "Bo'lim: Haydovchi")
+
     async def test_location_rules(self):
         await self._savdo_at(3002, "Eski bozor")
         await self.send(3002, **self.VIDEO)
@@ -442,12 +456,25 @@ class TabelTests(FlowTestCase):
             )
         await db.rename_department(await self.department_id("Savdo"), "Savdo bo'limi")
 
+        # a factory worker: a row from before the catalog stored the DEPARTMENT name as the
+        # branch, newer rows store the location; both are the same work place
+        await self.make_employee(5002, "Zavod Xodim", "Ishlab chiqarish")
+        for day, branch in ((1, "Ishlab chiqarish"), (2, "Zavod")):
+            work_date = today.replace(day=day).strftime("%Y-%m-%d")
+            await self.query(
+                """INSERT INTO attendance (user_id, full_name, branch, work_date, check_in_time, check_out_time,
+                                           work_hours, location_id) VALUES (5002, 'Zavod Xodim', ?, ?, ?, ?, 8, ?)""",
+                branch, work_date, f"{work_date} 09:00:00", f"{work_date} 17:00:00", await self.location_id("Zavod"),
+            )
+
         with mock.patch.object(excel, "TABLES_DIR", os.path.dirname(db.DB_PATH)):
             path = await excel.generate_monthly_tabel(today.year, today.month)
         sheet = load_workbook(path).active
         row = next(r for r in sheet.iter_rows(values_only=True) if r[0] == "Tabel Xodim")
         self.assertEqual(row[2], "Savdo bo'limi")
         self.assertEqual(row[3], "Eski bozor, Koson Lyuba")
+        factory = next(r for r in sheet.iter_rows(values_only=True) if r[0] == "Zavod Xodim")
+        self.assertEqual(factory[2:4], ("Ishlab chiqarish", "Zavod"))  # not "Ishlab chiqarish, Zavod"
         header = [cell.value for cell in sheet[1]]
         self.assertEqual(row[header.index("Umumiy ish kuni")], 3)
         self.assertEqual(row[header.index("Umumiy soat")], 24)

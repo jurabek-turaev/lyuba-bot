@@ -292,14 +292,16 @@ async def get_attendance_times(attendance_id: int):
 async def get_all_open_attendance():
     """
     Hali 'Ketdim' bosilmagan barcha yozuvlarni qaytaradi — auto-close tekshiruvi uchun.
-    The last column is the group of the record's location (None when it has no group).
+    The last columns are the group of the record's location (None when it has no group)
+    and the employee's department.
     """
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """SELECT a.id, a.user_id, a.full_name, a.branch, a.work_date, a.check_in_time,
-                      a.checkout_requested_at, l.group_id
+                      a.checkout_requested_at, l.group_id, e.department
                FROM attendance a
                LEFT JOIN locations l ON l.id = a.location_id
+               LEFT JOIN employees e ON e.user_id = a.user_id
                WHERE a.check_out_time IS NULL"""
         )
         return await cursor.fetchall()
@@ -345,13 +347,22 @@ async def get_month_attendance(year: int, month: int):
     arxivlash jarayonida oy TO'LIQ arxivlanishidan oldin ham, keyin ham chaqirilishi
     mumkin. Kundalik /tabel joriy (arxivlanmagan) oyni so'raydi — u yozuvlar baribir
     archived=0 bo'ladi, shuning uchun natija bir xil.
+
+    Branch column: rows written before departments/locations moved to the database
+    stored the factory DEPARTMENT name as the branch ("Haydovchi"). The migration
+    linked them to their location ("Zavod"); the tabel shows that location, so the
+    same work place is not listed twice ("Haydovchi, Zavod").
     """
     month_prefix = f"{year:04d}-{month:02d}"
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            """SELECT a.user_id, a.full_name, e.username, e.department, a.branch, a.work_date, a.work_hours
+            """SELECT a.user_id, a.full_name, e.username, e.department,
+                      CASE WHEN l.name IS NOT NULL AND a.branch IN (SELECT name FROM departments)
+                           THEN l.name ELSE a.branch END,
+                      a.work_date, a.work_hours
                FROM attendance a
                LEFT JOIN employees e ON e.user_id = a.user_id
+               LEFT JOIN locations l ON l.id = a.location_id
                WHERE a.work_date LIKE ?
                ORDER BY a.full_name, a.work_date""",
             (f"{month_prefix}%",),

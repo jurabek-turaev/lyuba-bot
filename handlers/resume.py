@@ -459,6 +459,27 @@ async def _options(step: Step, data: dict) -> list:
     return await options if inspect.isawaitable(options) else options
 
 
+async def _remove(bot: Bot, chat_id: int, message_id: int | None) -> None:
+    if not message_id:
+        return
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except TelegramAPIError:
+        pass  # already deleted, or older than 48 hours
+
+
+async def _clear_screen(bot: Bot, draft: Draft) -> None:
+    """
+    Delete the previous question and the helper messages around it, so the chat
+    shows one question at a time. The question goes first: it may carry the
+    contact keyboard, which must not come back when the helper message that
+    removed it is deleted.
+    """
+    await _remove(bot, draft.user_id, draft.data.pop("_msg", None))
+    for message_id in draft.data.pop("_trash", []):
+        await _remove(bot, draft.user_id, message_id)
+
+
 def _contact_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="📱 Telefon raqamni yuborish", request_contact=True)],
@@ -468,6 +489,8 @@ def _contact_keyboard() -> ReplyKeyboardMarkup:
 
 
 async def show_step(bot: Bot, draft: Draft, notice: str | None = None) -> None:
+    """Replace the previous question with this one (notice = a line above it, e.g. an error)."""
+    await _clear_screen(bot, draft)
     step = STEPS[draft.step]
     if step.input == "preview":
         await show_preview(bot, draft, notice)
@@ -482,7 +505,9 @@ async def show_step(bot: Bot, draft: Draft, notice: str | None = None) -> None:
         text = f"{notice}\n\n{text}"
 
     if step.input == "contact":
-        await bot.send_message(draft.user_id, text, reply_markup=_contact_keyboard(), parse_mode="HTML")
+        sent = await bot.send_message(draft.user_id, text, reply_markup=_contact_keyboard(), parse_mode="HTML")
+        draft.data["_msg"] = sent.message_id
+        await draft.save()
         return
 
     rows = []
@@ -495,14 +520,30 @@ async def show_step(bot: Bot, draft: Draft, notice: str | None = None) -> None:
     nav = []
     if draft.data.get("_history") or draft.data.get("_edit"):
         nav.append(_button(BACK_TEXT, step.key, "<"))
-    if step.skip:
+    if can_skip(step, draft.data):
         label = "➡️ Boshqa yo'q" if step.loop is None and step.skip_to and _has_items(step, draft.data) \
             else "⏭ O'tkazib yuborish"
         nav.append(_button(label, step.key, ">"))
     if nav:
         rows.append(nav)
-    await bot.send_message(draft.user_id, text, parse_mode="HTML",
-                           reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None)
+    sent = await bot.send_message(draft.user_id, text, parse_mode="HTML",
+                                  reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None)
+    draft.data["_msg"] = sent.message_id
+    await draft.save()
+
+
+# School ("Oʻrta"): the institution may be left out. Higher levels need the first
+# institution and its specialty; "skip" there only ends the list ("Boshqa yo'q").
+OPTIONAL_INSTITUTION_LEVELS = {EDUCATION_LEVELS[3]}
+
+
+def can_skip(step: Step, data: dict) -> bool:
+    if not step.skip:
+        return False
+    if (step.key in ("edu_institution", "edu_specialty") and not data.get("education")
+            and data.get("education_level") not in OPTIONAL_INSTITUTION_LEVELS):
+        return False
+    return True
 
 
 def _has_items(step: Step, data: dict) -> bool:
@@ -544,13 +585,20 @@ async def _download(bot: Bot, file_id: str | None) -> bytes | None:
 async def show_preview(bot: Bot, draft: Draft, notice: str | None = None) -> None:
     data = draft.data
     head = f"{notice}\n\n" if notice else ""
+    # an older preview (before "Tahrirlash") is replaced by this one
+    await _remove(bot, draft.user_id, data.pop("_preview_msg", None))
+
+    async def shown(message) -> None:
+        data["_preview_msg"] = message.message_id
+        await draft.save()
 
     if data.get("_kind") == db.KIND_UPLOAD:
         text = (f"{head}📋 <b>Arizangizni tekshiring</b>\n\n"
                 f"📎 Rezyume: {escape(data.get('resume_file_name') or 'rasm')}\n"
                 f"👤 {escape(data.get('full_name') or '—')}\n"
                 f"📞 {escape(data.get('phone') or '—')}\n{_private_lines(data)}")
-        await bot.send_message(draft.user_id, text, reply_markup=_preview_keyboard(), parse_mode="HTML")
+        await shown(await bot.send_message(draft.user_id, text, reply_markup=_preview_keyboard(),
+                                           parse_mode="HTML"))
         return
 
     caption = (f"{head}📄 <b>Rezyumengiz tayyor!</b> Tekshirib chiqing: hammasi to'g'rimi?\n\n"
@@ -558,8 +606,8 @@ async def show_preview(bot: Bot, draft: Draft, notice: str | None = None) -> Non
                "<i>Bu PDF sizniki — uni boshqa joylarga ham yuborishingiz mumkin.</i>")
     fingerprint = _fingerprint(data)
     if data.get("_pdf_file_id") and data.get("_pdf_fp") == fingerprint:
-        await bot.send_document(draft.user_id, data["_pdf_file_id"], caption=caption,
-                                reply_markup=_preview_keyboard(), parse_mode="HTML")
+        await shown(await bot.send_document(draft.user_id, data["_pdf_file_id"], caption=caption,
+                                            reply_markup=_preview_keyboard(), parse_mode="HTML"))
         return
 
     try:
@@ -572,13 +620,12 @@ async def show_preview(bot: Bot, draft: Draft, notice: str | None = None) -> Non
     except ResumeRenderError:
         logger.exception("Resume PDF failed (user_id=%s)", draft.user_id)
         data["_pdf_file_id"] = None
-        await draft.save()
-        await bot.send_message(
+        await shown(await bot.send_message(
             draft.user_id,
             f"{head}⚠️ PDF tayyorlashda xatolik yuz berdi. Ma'lumotlaringiz saqlandi — arizani "
             f"shundayligicha yuborishingiz mumkin, admin ularni ko'radi.\n\n{_private_lines(data)}",
             reply_markup=_preview_keyboard(), parse_mode="HTML",
-        )
+        ))
         return
 
     file_name = "Rezyume - " + re.sub(r"[^\w\s.-]", "", data.get("full_name", "")).strip()[:60] + ".pdf"
@@ -589,7 +636,7 @@ async def show_preview(bot: Bot, draft: Draft, notice: str | None = None) -> Non
     data["_pdf_file_id"] = message.document.file_id if message.document else None
     data["_pdf_name"] = file_name
     data["_pdf_fp"] = fingerprint
-    await draft.save()
+    await shown(message)
 
 
 async def _send_application(bot: Bot, callback: types.CallbackQuery, draft: Draft) -> None:
@@ -632,11 +679,11 @@ async def _send_application(bot: Bot, callback: types.CallbackQuery, draft: Draf
 # ===========================
 # Taking answers
 # ===========================
-async def _advance(bot: Bot, draft: Draft, step: Step, value) -> None:
+async def _advance(bot: Bot, draft: Draft, step: Step, value, notice: str | None = None) -> None:
     route = step.apply(draft.data, value) if step.apply else None
     draft.go(route or following(draft.data, step.key))
     await draft.save()
-    await show_step(bot, draft)
+    await show_step(bot, draft, notice)
 
 
 async def _drop_buttons(callback: types.CallbackQuery, answer: str | None = None) -> None:
@@ -708,13 +755,15 @@ async def _show_status(message: types.Message, app: dict) -> None:
 
 @router.callback_query(F.data.startswith("rs:"), Unapproved())
 async def start_choice(callback: types.CallbackQuery, bot: Bot):
-    await _drop_buttons(callback)
+    await _remove(bot, callback.message.chat.id, callback.message.message_id)  # "continue?" is answered
     await callback.answer()
     user_id = callback.from_user.id
     draft = await Draft.load(user_id)
     if callback.data == "rs:continue" and draft is not None:
-        await show_step(bot, draft)
+        await show_step(bot, draft)  # the question moves down, under the /start
     else:
+        if draft is not None:
+            await _clear_screen(bot, draft)
         await db.delete_draft(user_id)
         await _start_new(bot, user_id)
 
@@ -760,15 +809,13 @@ async def on_button(callback: types.CallbackQuery, bot: Bot):
     data = draft.data
 
     if code == "<":
-        await _drop_buttons(callback)
         await callback.answer()
         if draft.back():
             await draft.save()
             await show_step(bot, draft)
         return
 
-    if code == ">" and step.skip:
-        await _drop_buttons(callback, "O'tkazib yuborildi")
+    if code == ">" and can_skip(step, data):
         await callback.answer()
         if step.key == "photo":
             data["photo_file_id"] = None
@@ -790,11 +837,11 @@ async def on_button(callback: types.CallbackQuery, bot: Bot):
         await callback.answer("Bu tugma eskirgan.", show_alert=True)
         return
     label = options[code]
-    await _drop_buttons(callback, label)
     await callback.answer()
 
     if key == "consent":
         if code == NO:
+            await _drop_buttons(callback, label)
             await db.delete_draft(draft.user_id)
             await bot.send_message(draft.user_id, "Tushunarli. Fikringiz o'zgarsa, /start bosing.")
             return
@@ -869,26 +916,39 @@ async def on_message(message: types.Message, bot: Bot):
     step = STEPS[draft.step]
     data = draft.data
 
+    if step.input == "preview":
+        await message.answer("Yuqoridagi tugmalardan birini bosing: yuborish, tahrirlash yoki bekor qilish.")
+        return
+
+    # Only the current question stays in the chat: the answer itself is removed too
+    # (it is saved in the draft and shown in the preview at the end)
+    await _remove(bot, message.chat.id, message.message_id)
+
+    async def again(notice: str) -> None:
+        await show_step(bot, draft, f"⚠️ {notice}")
+
     if message.text and message.text.startswith("/"):
-        await message.answer("Savolga javob bering yoki anketani boshidan ko'rish uchun /start bosing.")
+        await again("Savolga javob bering yoki anketani boshidan ko'rish uchun /start bosing.")
         return
 
     if step.input == "contact":
         if message.text == BACK_TEXT:
+            hide = await message.answer("↩️", reply_markup=ReplyKeyboardRemove())
+            data.setdefault("_trash", []).append(hide.message_id)
             draft.back()
             await draft.save()
-            await message.answer("↩️", reply_markup=ReplyKeyboardRemove())
             await show_step(bot, draft)
             return
         contact = message.contact
         if contact is None or contact.user_id != message.from_user.id:
-            await message.answer("⚠️ Pastdagi «📱 Telefon raqamni yuborish» tugmasini bosing "
-                                 "(faqat o'zingizning raqamingiz qabul qilinadi).",
-                                 reply_markup=_contact_keyboard())
+            await again("Pastdagi «📱 Telefon raqamni yuborish» tugmasini bosing "
+                        "(faqat o'zingizning raqamingiz qabul qilinadi).")
             return
         data["phone"] = "+" + "".join(ch for ch in contact.phone_number if ch.isdigit())
-        await message.answer("✅ Raqam qabul qilindi.", reply_markup=ReplyKeyboardRemove())
-        await _advance(bot, draft, step, None)
+        # the contact keyboard is removed by a message; it is deleted with the question
+        hide = await message.answer("✅ Raqam qabul qilindi.", reply_markup=ReplyKeyboardRemove())
+        data.setdefault("_trash", []).append(hide.message_id)
+        await _advance(bot, draft, step, None, "✅ Raqam qabul qilindi.")
         return
 
     if step.input == "photo":
@@ -897,15 +957,14 @@ async def on_message(message: types.Message, bot: Bot):
             file_id = message.photo[-1].file_id
         elif message.document and (message.document.mime_type or "").startswith("image/"):
             if (message.document.file_size or 0) > MAX_PHOTO_BYTES:
-                await message.answer("⚠️ Rasm juda katta (10 MB gacha bo'lsin).")
+                await again("Rasm juda katta (10 MB gacha bo'lsin).")
                 return
             file_id = message.document.file_id
         if file_id is None:
-            await message.answer("⚠️ Rasm yuboring (📎 → Rasm) yoki «O'tkazib yuborish» ni bosing.")
+            await again("Rasm yuboring (📎 → Rasm) yoki «O'tkazib yuborish» ni bosing.")
             return
         data["photo_file_id"] = file_id
-        await message.answer("✅ Rasm qabul qilindi.")
-        await _advance(bot, draft, step, None)
+        await _advance(bot, draft, step, None, "✅ Rasm qabul qilindi.")
         return
 
     if step.input == "file":
@@ -915,30 +974,25 @@ async def on_message(message: types.Message, bot: Bot):
         elif message.document:
             name = message.document.file_name or ""
             if not name.lower().endswith(UPLOAD_EXTENSIONS):
-                await message.answer("⚠️ Faqat PDF, Word (DOC, DOCX) yoki rasm (JPG, PNG) qabul qilinadi.")
+                await again("Faqat PDF, Word (DOC, DOCX) yoki rasm (JPG, PNG) qabul qilinadi.")
                 return
             if (message.document.file_size or 0) > MAX_UPLOAD_BYTES:
-                await message.answer("⚠️ Fayl juda katta. Hajmi 20 MB gacha bo'lsin.")
+                await again("Fayl juda katta. Hajmi 20 MB gacha bo'lsin.")
                 return
             data.update(resume_file_id=message.document.file_id, resume_file_type="document",
                         resume_file_name=name)
         else:
-            await message.answer("⚠️ Rezyume faylini yuboring (📎 → Fayl).")
+            await again("Rezyume faylini yuboring (📎 → Fayl).")
             return
-        await message.answer("✅ Fayl qabul qilindi.")
-        await _advance(bot, draft, step, None)
-        return
-
-    if step.input == "preview":
-        await message.answer("Yuqoridagi tugmalardan birini bosing: yuborish, tahrirlash yoki bekor qilish.")
+        await _advance(bot, draft, step, None, "✅ Fayl qabul qilindi.")
         return
 
     if not message.text or step.parse is None:
-        await message.answer("⚠️ Yuqoridagi tugmalardan birini tanlang.")
+        await again("Yuqoridagi tugmalardan birini tanlang.")
         return
     try:
         value = step.parse(message.text, data)
     except InputError as error:
-        await message.answer(f"⚠️ {error}")
+        await again(str(error))
         return
     await _advance(bot, draft, step, value)

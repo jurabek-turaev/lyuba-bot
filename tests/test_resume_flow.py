@@ -160,6 +160,60 @@ class ResumeFlowTests(FlowTestCase):
         self.assertSent(await self.send(USER, contact=stranger), "o'zingizning raqamingiz")
         self.assertEqual(await self.step(), "phone")
 
+    async def test_only_the_current_question_stays_in_the_chat(self):
+        await self.begin()
+        deleted = lambda entries: [e["message_id"] for e in entries if e["type"] == "delete"]
+
+        # a typed answer: the answer and the question are deleted, the next question is sent
+        sent = await self.send(USER, text="Valiyev Ali")
+        self.assertEqual(sorted(deleted(sent)), sorted([self._update_id, 500]))
+        questions = self.sent_to(sent, USER)
+        self.assertEqual(len(questions), 1)
+        self.assertSent(questions, "sanangizni")
+
+        # a wrong answer: the same question comes back with the error above it
+        sent = await self.send(USER, text="1998.03.05")
+        self.assertEqual(len(deleted(sent)), 2)
+        self.assertEqual(len(self.sent_to(sent, USER)), 1)
+        self.assertSent(sent, "⚠️")
+        self.assertEqual(await self.step(), "birth_date")
+
+        # a button: the pressed question is deleted, no "Javob:" copy is left behind
+        await self.send(USER, text="15.03.1998")
+        sent = await self.press(USER, "rf:gender:0")
+        self.assertEqual(deleted(sent), [500])
+        self.assertNotSent(sent, "Javob:")
+
+        # the contact: the keyboard is removed by a helper message that goes with the next question
+        sent = await self.send(USER, contact={"phone_number": "998901234567", "first_name": "A", "user_id": USER})
+        self.assertSent(sent, "Raqam qabul qilindi")
+        # the question (with the keyboard) goes first, then the helper that removed the keyboard
+        self.assertEqual(len(deleted(sent)), 3, "answer, question and the keyboard helper")
+        self.assertEqual(len(deleted(await self.send(USER, text="Qarshi"))), 2)
+
+    async def test_higher_education_requires_the_first_institution(self):
+        await self.begin()
+        draft = await db.get_draft(USER)
+        await db.save_draft(USER, "form", "education_level", {**draft[2], "_history": ["start_availability"]})
+
+        sent = await self.press(USER, "rf:education_level:0")  # Oliy
+        self.assertNotSent(sent, "rf:edu_institution:>")
+        self.assertSent(await self.press(USER, "rf:edu_institution:>"), "eskirgan")  # an old/forged button
+        self.assertEqual(await self.step(), "edu_institution")
+        sent = await self.send(USER, text="TATU")
+        self.assertNotSent(sent, "rf:edu_specialty:>")  # the specialty too
+        sent = await self.send(USER, text="Informatika")
+        self.assertSent(sent, "rf:edu_year:>")  # the year stays optional
+        await self.send(USER, text="2020")
+        sent = await self.press(USER, "rf:edu_more:y")
+        self.assertSent(sent, "Boshqa yo'q", "rf:edu_institution:>")  # a SECOND institution may be dropped
+
+        # school: the institution may be left out
+        draft = await db.get_draft(USER)
+        await db.save_draft(USER, "form", "education_level", {**draft[2], "education": [], "_item": {}})
+        sent = await self.press(USER, "rf:education_level:3")
+        self.assertSent(sent, "rf:edu_institution:>")
+
     async def test_back_button_and_loops(self):
         await self.begin()
         await self.send(USER, text="Valiyev Ali")
@@ -180,11 +234,11 @@ class ResumeFlowTests(FlowTestCase):
         draft = await db.get_draft(USER)
         await db.save_draft(USER, "form", "edu_institution", {**draft[2], "_history": ["education_level"]})
         await self.send(USER, text="TATU")
-        await self.press(USER, "rf:edu_specialty:>")
+        await self.send(USER, text="Informatika")
         await self.send(USER, text="2020")
         await self.press(USER, "rf:edu_more:y")
-        self.assertEqual((await db.get_draft(USER))[2]["education"], [{"institution": "TATU", "specialty": None,
-                                                                       "year": 2020}])
+        self.assertEqual((await db.get_draft(USER))[2]["education"], [{"institution": "TATU",
+                                                                       "specialty": "Informatika", "year": 2020}])
         self.assertSent(await self.press(USER, "rf:edu_institution:<"), "Yana o'quv yurti")
         data = (await db.get_draft(USER))[2]
         self.assertEqual((data["education"], data["_item"]["institution"]), ([], "TATU"))
@@ -204,11 +258,11 @@ class ResumeFlowTests(FlowTestCase):
         sent = await self.press(USER, "rf:preview:edit")
         self.assertSent(sent, "rf:preview:e_education", "rf:preview:e_skills")
         self.assertSent(await self.press(USER, "rf:preview:e_education"), "Ma'lumotingiz")
-        await self.press(USER, "rf:education_level:2")
-        sent = await self.press(USER, "rf:edu_institution:>")  # no school this time
+        await self.press(USER, "rf:education_level:3")  # school: the institution may be left out
+        sent = await self.press(USER, "rf:edu_institution:>")
         self.assertSent(sent, "Rezyumengiz tayyor")
         self.assertEqual(len(self.rendered), 2, "changed answers make a new PDF")
-        self.assertEqual((self.rendered[1]["education_level"], self.rendered[1]["education"]), ("Oʻrta maxsus", []))
+        self.assertEqual((self.rendered[1]["education_level"], self.rendered[1]["education"]), ("Oʻrta", []))
         self.assertEqual(len(self.rendered[1]["jobs"]), 2, "other sections are untouched")
 
         # unchanged answers: the same PDF is shown again without rendering
