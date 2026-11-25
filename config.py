@@ -58,3 +58,10 @@ LEGACY_GROUP_ID = _get_optional_int("GROUP_ID")                        # savdo g
 LEGACY_PRODUCTION_LAT = _get_optional_float("PRODUCTION_LAT")          # zavod koordinatasi
 LEGACY_PRODUCTION_LON = _get_optional_float("PRODUCTION_LON")
 LEGACY_PRODUCTION_GROUP_ID = _get_optional_int("PRODUCTION_GROUP_ID")  # zavod guruhi
+
+# Rezyume PDF'ini yasaydigan RenderCV alohida virtualenv'da ishlaydi (aiogram bilan
+# pydantic versiyasi to'qnashadi). Docker'da /opt/rendercv ichida o'rnatilgan.
+# Lokal: python -m venv .venv-rendercv && .venv-rendercv/bin/pip install -r requirements-rendercv.txt
+RESUME_RENDERER_PYTHON = os.getenv("RESUME_RENDERER_PYTHON") or (
+    ".venv-rendercv/bin/python" if os.path.exists(".venv-rendercv/bin/python") else "/opt/rendercv/bin/python"
+)

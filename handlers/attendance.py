@@ -91,6 +91,11 @@ async def ask_location_for_check_out(message: types.Message, state: FSMContext):
 # Yakunlash funksiyalari — handlers/location.py dagi handle_location chaqiradi
 # (masofa allaqachon tekshirilgan va ruxsat etilgan chegarada)
 # ===========================
+async def _department_name(user_id: int) -> str | None:
+    employee = await db.get_employee_short(user_id)  # (full_name, department, is_active)
+    return employee[1] if employee else None
+
+
 async def finalize_check_in(message: types.Message, state: FSMContext, distance: int, location: Location):
     data = await state.get_data()
     name = data.get("name")
@@ -116,7 +121,8 @@ async def finalize_check_in(message: types.Message, state: FSMContext, distance:
     # xodimga tasdiq berish va FSM'ni tozalash BLOKLANMASLIGI kerak. Aks holda
     # xodim tasdiq olmay qayta video yuboradi va holatlar chalkashadi.
     try:
-        await telegram_group.send_check_in(message.bot, location.group_id, name, branch, distance, time_str)
+        await telegram_group.send_check_in(message.bot, location.group_id, name, branch, distance, time_str,
+                                           await _department_name(user_id))
     except Exception:
         logger.exception("Guruhga 'Keldi' xabarini yuborib bo'lmadi (branch=%s)", branch)
 
@@ -153,7 +159,8 @@ async def finalize_check_out(message: types.Message, state: FSMContext, distance
     # Guruhga xabar timeout'da yiqilsa ham, chiqish allaqachon bazaga yozilgan —
     # xodimga tasdiq berish va FSM'ni tozalash BLOKLANMASLIGI kerak.
     try:
-        await telegram_group.send_check_out(message.bot, location.group_id, name, branch, distance, time_str, hours)
+        await telegram_group.send_check_out(message.bot, location.group_id, name, branch, distance, time_str,
+                                            hours, await _department_name(message.from_user.id))
     except Exception:
         logger.exception("Guruhga 'Ketdi' xabarini yuborib bo'lmadi (branch=%s)", branch)
 

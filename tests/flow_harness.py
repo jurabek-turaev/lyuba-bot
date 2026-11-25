@@ -13,10 +13,10 @@ from datetime import datetime
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import (
-    AnswerCallbackQuery, DeleteMessage, EditMessageReplyMarkup, EditMessageText, GetChat, SendChatAction,
-    SendLocation, SendMessage, SendVideoNote,
+    AnswerCallbackQuery, DeleteMessage, EditMessageCaption, EditMessageReplyMarkup, EditMessageText, GetChat,
+    SendChatAction, SendDocument, SendLocation, SendMessage, SendPhoto, SendVideoNote,
 )
-from aiogram.types import Chat, ChatFullInfo, Message, Update
+from aiogram.types import BufferedInputFile, Chat, ChatFullInfo, Document, Message, PhotoSize, Update
 
 import config
 import database as db
@@ -70,7 +70,27 @@ class FakeSession(BaseSession):
         elif isinstance(method, GetChat):
             return ChatFullInfo(id=method.chat_id, type="supergroup", accent_color_id=0, max_reaction_count=0,
                                 title=self.group_titles.get(method.chat_id, f"Guruh {method.chat_id}"))
-        elif isinstance(method, (EditMessageReplyMarkup, SendChatAction)):
+        elif isinstance(method, (SendDocument, SendPhoto)):
+            is_doc = isinstance(method, SendDocument)
+            media = method.document if is_doc else method.photo
+            uploaded = isinstance(media, BufferedInputFile)
+            file_id = f"uploaded-{media.filename}" if uploaded else media
+            self.log.append({"type": "doc" if is_doc else "photo", "chat": method.chat_id, "file": file_id,
+                             "uploaded": uploaded, "caption": method.caption,
+                             "buttons": _buttons(method.reply_markup)})
+            self._next_message_id += 1
+            chat = Chat(id=method.chat_id, type="private")
+            if is_doc:
+                return Message(message_id=self._next_message_id, date=datetime.now(), chat=chat,
+                               document=Document(file_id=file_id, file_unique_id=file_id))
+            return Message(message_id=self._next_message_id, date=datetime.now(), chat=chat,
+                           photo=[PhotoSize(file_id=file_id, file_unique_id=file_id, width=1, height=1)])
+        elif isinstance(method, EditMessageCaption):
+            self.log.append({"type": "edit", "text": method.caption, "buttons": _buttons(method.reply_markup)})
+        elif isinstance(method, EditMessageReplyMarkup):
+            self.log.append({"type": "markup", "buttons": _buttons(method.reply_markup)})
+            return True
+        elif isinstance(method, SendChatAction):
             return True
         else:
             self.log.append({"type": type(method).__name__})

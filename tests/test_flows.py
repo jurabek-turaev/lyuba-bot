@@ -5,6 +5,7 @@ copy per test), fake Telegram connection. No network, no real .env.
 Run:  python -m unittest discover -s tests -t . -v
 """
 import os
+import unittest
 import sqlite3
 from datetime import datetime, timedelta
 from unittest import mock
@@ -106,17 +107,34 @@ class MigrationTests(FlowTestCase):
 class RegistrationTests(FlowTestCase):
     async def test_application_approval_and_department_choice(self):
         user = 2001
-        self.assertSent(await self.send(user, text="/start"), "admin tasdig'i kerak")
-        self.assertSent(await self.send(user, text="Ali Valiyev"), "Telefon raqamni yuborish")
-        sent = await self.send(user, contact={"phone_number": "998901234567", "first_name": "Ali", "user_id": user})
-        self.assertSent(sent, "apply:send")
+        self.assertSent(await self.send(user, text="/start"), "rf:consent:y")
+        await self.press(user, "rf:consent:y")
+        self.assertSent(await self.press(user, "rf:choose:upload"), "Rezyume faylingizni")
+        await self.send(user, document={"file_id": "cv", "file_unique_id": "cv", "file_name": "cv.pdf"})
+        await self.send(user, text="Valiyev Ali")
+        await self.send(user, contact={"phone_number": "998901234567", "first_name": "Ali", "user_id": user})
+        await self.press(user, f"rf:position:{await self.department_id('Haydovchi')}")
+        await self.send(user, text="4 000 000")
+        self.assertSent(await self.press(user, "rf:start_availability:0"), "rf:preview:send")
 
-        sent = await self.press(user, "apply:send")
-        card = self.sent_to(sent, OWNER)
-        self.assertTrue(card, "the admin gets the application card")
+        card = self.sent_to(await self.press(user, "rf:preview:send"), OWNER, "doc")
+        self.assertTrue(card, "the admin gets the application card with the resume file")
         app_id = (await db.get_pending_applications())[0][0]
 
-        self.assertSent(self.sent_to(await self.press(OWNER, f"review:ok:{app_id}"), user), "tasdiqlandi")
+        self.assertSent(await self.press(OWNER, f"hr:hire:{app_id}"), f"hr:hire_ok:{app_id}")  # confirmation
+        self.assertSent(self.sent_to(await self.press(OWNER, f"hr:hire_ok:{app_id}"), user), "Tabriklaymiz")
+
+        # the department is the position from the application: no question, Zavod chosen automatically
+        sent = await self.send(user, text="/start")
+        self.assertNotSent(sent, "Qaysi bo'limda ishlaysiz")
+        self.assertSent(await self.send(user, **self.VIDEO), "Keldim")
+
+    async def test_old_style_employee_without_department_still_chooses_it(self):
+        user = 2004
+        app_id = await db.create_application(user, "Ali Valiyev", "+998901234567", None)
+        # a card sent by the old version: its "approve" button now asks for a confirmation
+        self.assertSent(await self.press(OWNER, f"review:ok:{app_id}"), f"hr:hire_ok:{app_id}")
+        self.assertSent(self.sent_to(await self.press(OWNER, f"hr:hire_ok:{app_id}"), user), "Tabriklaymiz")
 
         sent = await self.send(user, text="/start")
         self.assertSent(sent, "Qaysi bo'limda ishlaysiz", f"dept:{await self.department_id('Haydovchi')}")
@@ -174,6 +192,20 @@ class AttendanceTests(FlowTestCase):
         sent = await self.send(3001, **self.live(SHOP_POINTS["Eski bozor"]))
         self.assertSent(sent, "Ketganingiz qayd etildi")
         self.assertSent(self.sent_to(sent, SAVDO_GROUP), "Ketdi", "Ishlagan vaqti")
+
+    async def test_group_card_names_the_department_of_a_shared_location(self):
+        # Ishlab chiqarish, Haydovchi and I.T.R all work at Zavod: the card must say who it is
+        await self.make_employee(3010, "Zavod Xodim", "Haydovchi")
+        await self.send(3010, text="/start")
+        sent = await self.check_in(3010, ZAVOD_POINT)
+        self.assertSent(self.sent_to(sent, ZAVOD_GROUP), "Bo'lim: Haydovchi", "Filial: Zavod", "Keldi")
+        sent = await self.check_out(3010, ZAVOD_POINT)
+        self.assertSent(self.sent_to(sent, ZAVOD_GROUP), "Bo'lim: Haydovchi", "Filial: Zavod", "Ketdi")
+
+        await self.query("UPDATE attendance SET check_out_time = NULL, checkout_requested_at = '2026-01-01 10:00:00'")
+        start = len(self.log)
+        await auto_close._check_and_close(self.bot)
+        self.assertSent(self.sent_to(self.log[start:], ZAVOD_GROUP), "Avtomatik yopildi", "Bo'lim: Haydovchi")
 
     async def test_location_rules(self):
         await self._savdo_at(3002, "Eski bozor")
@@ -425,12 +457,95 @@ class TabelTests(FlowTestCase):
             )
         await db.rename_department(await self.department_id("Savdo"), "Savdo bo'limi")
 
+        # a factory worker: a row from before the catalog stored the DEPARTMENT name as the
+        # branch, newer rows store the location; both are the same work place
+        await self.make_employee(5002, "Zavod Xodim", "Ishlab chiqarish")
+        for day, branch in ((1, "Ishlab chiqarish"), (2, "Zavod")):
+            work_date = today.replace(day=day).strftime("%Y-%m-%d")
+            await self.query(
+                """INSERT INTO attendance (user_id, full_name, branch, work_date, check_in_time, check_out_time,
+                                           work_hours, location_id) VALUES (5002, 'Zavod Xodim', ?, ?, ?, ?, 8, ?)""",
+                branch, work_date, f"{work_date} 09:00:00", f"{work_date} 17:00:00", await self.location_id("Zavod"),
+            )
+
         with mock.patch.object(excel, "TABLES_DIR", os.path.dirname(db.DB_PATH)):
             path = await excel.generate_monthly_tabel(today.year, today.month)
         sheet = load_workbook(path).active
         row = next(r for r in sheet.iter_rows(values_only=True) if r[0] == "Tabel Xodim")
         self.assertEqual(row[2], "Savdo bo'limi")
         self.assertEqual(row[3], "Eski bozor, Koson Lyuba")
+        factory = next(r for r in sheet.iter_rows(values_only=True) if r[0] == "Zavod Xodim")
+        self.assertEqual(factory[2:4], ("Ishlab chiqarish", "Zavod"))  # not "Ishlab chiqarish, Zavod"
         header = [cell.value for cell in sheet[1]]
         self.assertEqual(row[header.index("Umumiy ish kuni")], 3)
         self.assertEqual(row[header.index("Umumiy soat")], 24)
+
+    async def test_lateness_column_is_negative_and_changes_nothing_else(self):
+        from openpyxl import load_workbook
+
+        await self.make_employee(5003, "Kech Xodim", "Savdo")
+        await db.save_work_schedule(5003, "09:00", "18:00", 2_600_000)
+        today = datetime.now()
+        # (day, check-in, check-out): 1.5 h late, early, 15 min late; day 3 has a second,
+        # later shift that day: only the FIRST check-in of a day counts
+        shifts = [(1, "10:30", "18:00"), (2, "08:55", "17:55"), (3, "09:15", "13:00"), (3, "14:00", "18:00")]
+        for day, check_in, check_out in shifts:
+            work_date = today.replace(day=day).strftime("%Y-%m-%d")
+            hours = (datetime.strptime(check_out, "%H:%M") - datetime.strptime(check_in, "%H:%M")).seconds / 3600
+            await self.query(
+                """INSERT INTO attendance (user_id, full_name, branch, work_date, check_in_time, check_out_time,
+                                           work_hours, location_id) VALUES (5003, 'Kech Xodim', 'Eski bozor', ?, ?, ?, ?, ?)""",
+                work_date, f"{work_date} {check_in}:00", f"{work_date} {check_out}:00", round(hours, 2),
+                await self.location_id("Eski bozor"),
+            )
+
+        with mock.patch.object(excel, "TABLES_DIR", os.path.dirname(db.DB_PATH)):
+            path = await excel.generate_monthly_tabel(today.year, today.month)
+        sheet = load_workbook(path).active
+        header = [cell.value for cell in sheet[1]]
+        row = next(r for r in sheet.iter_rows(min_row=2) if r[0].value == "Kech Xodim")
+        value = lambda title: row[header.index(title)].value
+
+        self.assertEqual(value("Farq: kechikish (soat)"), -1.75)
+        self.assertEqual(row[header.index("Farq: kechikish (soat)")].font.color.rgb[-6:], "C00000")
+        # the other columns are exactly what they were without the lateness column
+        worked = [7.5, 9.0, 7.75]  # day 3 = 3.75 + 4
+        self.assertEqual(value("Umumiy soat"), sum(worked))
+        self.assertEqual(value("Oylik norma (soat)"), sum(min(h, 9) for h in worked))
+        self.assertEqual(value("Farq: ortiqcha (soat)"), 0)
+        self.assertEqual(value("Ishlagan oylik (so'm)"), round(2_600_000 / 26 / 9 * sum(min(h, 9) for h in worked)))
+        self.assertEqual(header.index("Farq: kechikish (soat)"), header.index("Farq: ortiqcha (soat)") + 1)
+
+        # the header row and the name column are frozen and highlighted
+        self.assertEqual(sheet.freeze_panes, "B2")
+        self.assertEqual(sheet["A1"].fill.start_color.rgb[-6:], "DDEBF7")
+        self.assertEqual(row[0].fill.start_color.rgb[-6:], "F2F2F2")
+
+    async def test_employee_without_a_schedule_has_no_lateness(self):
+        from openpyxl import load_workbook
+
+        await self.make_employee(5004, "Grafiksiz Xodim", "Savdo")
+        work_date = datetime.now().replace(day=1).strftime("%Y-%m-%d")
+        await self.query(
+            """INSERT INTO attendance (user_id, full_name, branch, work_date, check_in_time, check_out_time,
+                                       work_hours) VALUES (5004, 'Grafiksiz Xodim', 'Eski bozor', ?, ?, ?, 8)""",
+            work_date, f"{work_date} 11:00:00", f"{work_date} 19:00:00",
+        )
+        with mock.patch.object(excel, "TABLES_DIR", os.path.dirname(db.DB_PATH)):
+            path = await excel.generate_monthly_tabel(datetime.now().year, datetime.now().month)
+        sheet = load_workbook(path).active
+        header = [cell.value for cell in sheet[1]]
+        row = next(r for r in sheet.iter_rows(min_row=2, values_only=True) if r[0] == "Grafiksiz Xodim")
+        self.assertIsNone(row[header.index("Farq: kechikish (soat)")])
+
+
+class LateHoursTests(unittest.TestCase):
+    def test_late_hours(self):
+        from services.worktime import late_hours
+        at = lambda text: datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        self.assertEqual(late_hours(at("2026-11-02 10:30:00"), "09:00"), 1.5)
+        self.assertEqual(late_hours(at("2026-11-02 08:40:00"), "09:00"), 0.0)   # early
+        self.assertEqual(late_hours(at("2026-11-02 09:00:00"), "09:00"), 0.0)   # on time
+        self.assertEqual(late_hours(at("2026-11-02 22:30:00"), "22:00"), 0.5)   # night shift
+        self.assertEqual(late_hours(at("2026-11-03 00:30:00"), "22:00"), 2.5)   # after midnight
+        self.assertEqual(late_hours(at("2026-11-02 21:50:00"), "22:00"), 0.0)

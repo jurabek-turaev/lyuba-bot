@@ -37,8 +37,13 @@ async def send_help_message(message: types.Message):
         "└ Xodimni ro'yxatdan tanlab, uni botdan bloklash (ishdan chiqarish) imkonini beradi.\n\n"
 
         "📝 <b>/arizalar</b>\n"
-        "└ Javob kutayotgan arizalarni (yangi yoki qayta ishga olinmoqchi bo'lgan xodimlar) tugmalar bilan ko'rsatadi: "
-        "tasdiqlash, rad etish yoki bloklash.\n"
+        "└ Ishga arizalar bo'limlar bo'yicha: ⏳ yangi, 📅 suhbat kutilmoqda, 📋 bugungi suhbatlar. "
+        "Bo'lim tugmasi o'sha arizalarning kartalarini (rezyume fayli bilan) yuboradi.\n"
+        "└ Yangi ariza: suhbatga taklif qilish (kun, vaqt, joy, izoh), rad etish yoki bloklash.\n"
+        "└ Suhbatga taklif qilingan: ishga qabul qilish, rad etish, vaqtini ko'chirish, «kelmadi».\n"
+        "└ Rad javobi kadrga xushmuomala xat bilan boradi; tanlangan sabab faqat sizga ko'rinadi.\n"
+        "└ Kadrga suhbatdan bir kun oldin 18:00 da eslatma boradi; suhbatdan 1 soat keyin bot "
+        "sizdan natijani so'raydi.\n"
         "└ <code>/blokdan_chiqar 123456789</code> — bloklangan foydalanuvchini blokdan chiqaradi.\n\n"
 
         "🕘 <b>/ish_vaqti_belgilash</b>\n"

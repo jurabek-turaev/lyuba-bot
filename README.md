@@ -5,7 +5,9 @@ video tasdig'i bilan qayd qiluvchi tizim. Oy oxirida `/tabel` orqali Excel hisob
 
 ## Imkoniyatlari
 
-- Ariza orqali ro'yxatdan o'tish: ism + telefon → admin tasdiqlaydi / rad etadi / bloklaydi
+- Ishga ariza: nomzod botda anketa to'ldiradi (bot undan PDF rezyume yasaydi) yoki tayyor
+  rezyumesini yuboradi → admin kartani oladi va tasdiqlaydi / rad etadi / bloklaydi.
+  Tugallanmagan anketa bazada saqlanadi — bot qayta ishga tushsa ham yo'qolmaydi
 - Bo'lim va filiallarni admin botning o'zida boshqaradi (yaratish, tahrirlash, faolsizlantirish)
 - Bo'limda bitta filial bo'lsa — xodimga avtomatik, bir nechta bo'lsa — xodim o'zi tanlaydi
 - Dumaloq video (video_note) tasdig'i — filialga biriktirilgan guruhga avtomatik yuboriladi
@@ -30,7 +32,7 @@ tugmalarda bor — buyruq yozish shart emas.
 | `/help` | Buyruqlar bo'yicha yo'riqnoma |
 | `/tabel` | Joriy oy tabelini Excel qilib oladi |
 | `/hodimlar` | Faol xodimlar ro'yxati — tugma orqali ishdan chiqarish |
-| `/arizalar` | Kutilayotgan arizalar (tasdiqlash / rad etish / bloklash) |
+| `/arizalar` | Ishga arizalar: yangi, suhbat kutilmoqda, bugungi suhbatlar (menyuda: 📝 Arizalar) |
 | `/ish_vaqti_belgilash` | Xodimning ish vaqti va oylik maoshini belgilash |
 | `/filiallar` | Bo'lim va filiallarni boshqarish (menyuda: 🗂 Bo'lim va filiallar) |
 | `/bolim_ozgartir [ID]` | O'zining yoki ko'rsatilgan xodimning bo'limini tozalaydi |
@@ -70,6 +72,49 @@ aylansa (ID o'zgaradi), bot buni ham o'zi kuzatadi.
   keyinroq faolsizlantirilgan bo'lsa ham.
 - Filial nomi o'zgartirilsa, eski davomat yozuvlarida eski nom qoladi (tarix).
 
+## Ishga qabul qilish (arizalar)
+
+Xodim bo'lmagan har kim `/start` bosib ishga ariza topshira oladi.
+
+**Nomzod tomoni**
+1. Shaxsiy ma'lumotlarga rozilik (ma'lumotlar faqat ishga qabul qilish uchun ishlatiladi).
+2. Ikki yo'l:
+   - **📝 Rezyume yaratish** — 17 ta savol: shaxsiy ma'lumotlar, rasm, lavozim, kutilayotgan
+     maosh, ma'lumoti, ish tajribasi, tillar, ko'nikmalar. Bot javoblardan **PDF rezyume** yasaydi
+     (RenderCV, A4). PDF universal: unda lavozim, maosh va ishga chiqish sanasi yo'q — ular faqat
+     adminning kartasida ko'rinadi.
+   - **📎 Tayyor rezyume** — o'z fayli (PDF, DOC, DOCX, JPG, PNG, 20 MB gacha) + ism, telefon,
+     lavozim, maosh.
+3. Oldindan ko'rish → yuborish, bo'limini tahrirlash yoki bekor qilish.
+
+Tugallanmagan anketa **bazada** saqlanadi: bot qayta ishga tushsa ham yo'qolmaydi, `/start`
+uni davom ettirishni taklif qiladi. Yuborilgan arizani nomzod `/start` orqali qaytarib olishi mumkin.
+
+**Admin tomoni** — har bir ariza bitta karta (rezyume fayli + qisqa ma'lumot), tugmalari holatga qarab:
+
+| Holat | Amallar |
+|-------|---------|
+| ⏳ Yangi | 📅 Suhbatga taklif qilish · ❌ Rad etish · 🚫 Bloklash |
+| 📅 Suhbat belgilangan | ✅ Ishga qabul qilish · ❌ Rad etish · 📅 Ko'chirish · 🚷 Kelmadi · 🚫 Bloklash |
+
+- **Suhbatga taklif**: kun (keyingi ish kunlari yoki qo'lda) → vaqt → joy (filiallar ro'yxati
+  yoki boshqa manzil) → izoh → nomzod oladigan xabarni oldindan ko'rish → yuborish. Nomzod
+  xabarni Yandex xarita havolasi va xaritadagi nuqta bilan oladi.
+- Nomzod **«🔁 Boshqa vaqt so'rash»** tugmasi bilan qulay vaqtini yozadi — admin uni
+  «📅 Ko'chirish» tugmasi bilan oladi.
+- **Rad etish**: ichki sabab (nomzodga aytilmaydi) → xushmuomala rad xati → yuborish.
+- **Ishga qabul qilish**: nomzod xodimga aylanadi, bo'limi arizadagi lavozimdan avtomatik
+  qo'yiladi. Ish vaqti va maoshini «🕘 Ish vaqtini belgilash» orqali kiriting.
+- Avval ishlagan nomzodning kartasida «♻️ Avval ishlagan, qayta topshirmoqda» belgisi bo'ladi.
+
+**Avtomatik:**
+- Suhbatdan bir kun oldin 18:00 da nomzodga eslatma (taklif 24 soatdan kam oldin yuborilgan
+  bo'lsa — yuborilmaydi).
+- Suhbat vaqtidan 1 soat o'tgach admin natijani belgilashi uchun xabar oladi.
+- Rad etilgan yoki suhbatga kelmagan nomzod 7 kundan keyin qayta ariza bera oladi.
+- Ishga olinmagan nomzodlarning ma'lumotlari 1 yildan, tugallanmagan anketalar 30 kundan
+  keyin avtomatik o'chiriladi.
+
 ## Xodimni ishdan chiqarish haqida
 
 `/hodimlar` orqali chiqarilgan xodim:
@@ -106,6 +151,7 @@ cp .env.example .env
 | `DEVELOPER_ID` | Dasturchining Telegram ID'si (test uchun masofa tekshiruvidan ozod) |
 | `MAX_DISTANCE` | Ruxsat etilgan masofa (metr), barcha filiallar uchun, masalan `200` |
 | `MAX_SHIFT_HOURS` | Maksimal smena (soat), masalan `12` |
+| `RESUME_RENDERER_PYTHON` | *Ixtiyoriy.* RenderCV o'rnatilgan python yo'li (rezyume PDF'i uchun). Docker'da kerak emas |
 | `GROUP_ID`, `PRODUCTION_LAT`, `PRODUCTION_LON`, `PRODUCTION_GROUP_ID` | *Ixtiyoriy.* Faqat eski bazani ko'chirish uchun (pastga qarang). Yangi o'rnatishda bo'sh qoldiring |
 
 ### Eski versiyadan yangilash
@@ -155,6 +201,18 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python bot.py
 ```
+
+**Rezyume PDF'i (RenderCV)** botdan alohida virtualenv'da ishlaydi — aiogram 3.13 bilan
+pydantic versiyasi to'qnashadi. Docker'da u avtomatik o'rnatiladi (`/opt/rendercv`).
+Lokal ishlatish uchun bir marta:
+
+```bash
+python -m venv .venv-rendercv
+.venv-rendercv/bin/pip install -r requirements-rendercv.txt
+```
+
+Bot `.venv-rendercv` ni o'zi topadi; boshqa joyga o'rnatsangiz, `.env` da
+`RESUME_RENDERER_PYTHON` ga o'sha python yo'lini yozing.
 
 ---
 

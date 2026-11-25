@@ -7,18 +7,24 @@ class AttendanceState(StatesGroup):
     waiting_for_location = State()
 
 
-class ApplicationState(StatesGroup):
-    """Steps of an employee application (new or removed employee asking for access)."""
-    waiting_for_name = State()
-    waiting_for_phone = State()
-    confirming = State()
-
-
 class CatalogState(StatesGroup):
     """Admin flow for departments and locations (handlers/catalog.py)."""
     browsing = State()        # inline-button steps of a create / edit wizard
     entering_name = State()   # waiting for a name typed as text
     entering_point = State()  # waiting for a Telegram location, a maps link or "lat, lon"
+
+
+class InterviewState(StatesGroup):
+    """Admin: inviting a candidate to an interview or moving it (handlers/interview.py)."""
+    browsing = State()        # inline-button steps: date, time, place, note, preview
+    entering_date = State()   # a date typed as text
+    entering_place = State()  # an address that is not one of the locations
+    entering_note = State()   # an own note for the candidate
+
+
+class RescheduleState(StatesGroup):
+    """Candidate: typing the wish for another interview time."""
+    waiting = State()
 
 
 class ShiftState(StatesGroup):

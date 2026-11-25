@@ -1,0 +1,8 @@
+# RenderCV: rezyume PDF'ini yasaydi. Botdan ALOHIDA virtualenv'ga o'rnatiladi
+# (aiogram 3.13 pydantic<2.10 talab qiladi, RenderCV esa pydantic>=2.12).
+# Versiyalar qat'iy: bot RenderCV'ning ichki API'sidan foydalanadi.
+rendercv==2.8
+typst==0.15.2
+rendercv-fonts==0.5.1
+pydantic==2.14.4
+phonenumbers==9.0.44

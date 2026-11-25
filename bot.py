@@ -8,6 +8,7 @@ from config import BOT_TOKEN
 from database import init_db
 from handlers import router as main_router
 from services.auto_close import auto_close_loop
+from services.hr_tasks import hr_tasks_loop
 from services.monthly_report import monthly_report_loop
 
 logger = logging.getLogger(__name__)
@@ -39,10 +40,11 @@ async def main():
     dp = Dispatcher()
     dp.include_router(main_router)
 
-    # Fon vazifalari: smenani avtomatik yopish + oylik tabel/arxivlash
+    # Fon vazifalari: smenani avtomatik yopish + oylik tabel/arxivlash + kadrlar (HR)
     background_tasks = [
         asyncio.create_task(auto_close_loop(bot)),
         asyncio.create_task(monthly_report_loop(bot)),
+        asyncio.create_task(hr_tasks_loop(bot)),
     ]
 
     # Eski (ishlatilmagan) update'larni tashlab, botni ishga tushirish
