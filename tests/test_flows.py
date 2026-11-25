@@ -5,6 +5,7 @@ copy per test), fake Telegram connection. No network, no real .env.
 Run:  python -m unittest discover -s tests -t . -v
 """
 import os
+import unittest
 import sqlite3
 from datetime import datetime, timedelta
 from unittest import mock
@@ -478,3 +479,73 @@ class TabelTests(FlowTestCase):
         header = [cell.value for cell in sheet[1]]
         self.assertEqual(row[header.index("Umumiy ish kuni")], 3)
         self.assertEqual(row[header.index("Umumiy soat")], 24)
+
+    async def test_lateness_column_is_negative_and_changes_nothing_else(self):
+        from openpyxl import load_workbook
+
+        await self.make_employee(5003, "Kech Xodim", "Savdo")
+        await db.save_work_schedule(5003, "09:00", "18:00", 2_600_000)
+        today = datetime.now()
+        # (day, check-in, check-out): 1.5 h late, early, 15 min late; day 3 has a second,
+        # later shift that day: only the FIRST check-in of a day counts
+        shifts = [(1, "10:30", "18:00"), (2, "08:55", "17:55"), (3, "09:15", "13:00"), (3, "14:00", "18:00")]
+        for day, check_in, check_out in shifts:
+            work_date = today.replace(day=day).strftime("%Y-%m-%d")
+            hours = (datetime.strptime(check_out, "%H:%M") - datetime.strptime(check_in, "%H:%M")).seconds / 3600
+            await self.query(
+                """INSERT INTO attendance (user_id, full_name, branch, work_date, check_in_time, check_out_time,
+                                           work_hours, location_id) VALUES (5003, 'Kech Xodim', 'Eski bozor', ?, ?, ?, ?, ?)""",
+                work_date, f"{work_date} {check_in}:00", f"{work_date} {check_out}:00", round(hours, 2),
+                await self.location_id("Eski bozor"),
+            )
+
+        with mock.patch.object(excel, "TABLES_DIR", os.path.dirname(db.DB_PATH)):
+            path = await excel.generate_monthly_tabel(today.year, today.month)
+        sheet = load_workbook(path).active
+        header = [cell.value for cell in sheet[1]]
+        row = next(r for r in sheet.iter_rows(min_row=2) if r[0].value == "Kech Xodim")
+        value = lambda title: row[header.index(title)].value
+
+        self.assertEqual(value("Farq: kechikish (soat)"), -1.75)
+        self.assertEqual(row[header.index("Farq: kechikish (soat)")].font.color.rgb[-6:], "C00000")
+        # the other columns are exactly what they were without the lateness column
+        worked = [7.5, 9.0, 7.75]  # day 3 = 3.75 + 4
+        self.assertEqual(value("Umumiy soat"), sum(worked))
+        self.assertEqual(value("Oylik norma (soat)"), sum(min(h, 9) for h in worked))
+        self.assertEqual(value("Farq: ortiqcha (soat)"), 0)
+        self.assertEqual(value("Ishlagan oylik (so'm)"), round(2_600_000 / 26 / 9 * sum(min(h, 9) for h in worked)))
+        self.assertEqual(header.index("Farq: kechikish (soat)"), header.index("Farq: ortiqcha (soat)") + 1)
+
+        # the header row and the name column are frozen and highlighted
+        self.assertEqual(sheet.freeze_panes, "B2")
+        self.assertEqual(sheet["A1"].fill.start_color.rgb[-6:], "DDEBF7")
+        self.assertEqual(row[0].fill.start_color.rgb[-6:], "F2F2F2")
+
+    async def test_employee_without_a_schedule_has_no_lateness(self):
+        from openpyxl import load_workbook
+
+        await self.make_employee(5004, "Grafiksiz Xodim", "Savdo")
+        work_date = datetime.now().replace(day=1).strftime("%Y-%m-%d")
+        await self.query(
+            """INSERT INTO attendance (user_id, full_name, branch, work_date, check_in_time, check_out_time,
+                                       work_hours) VALUES (5004, 'Grafiksiz Xodim', 'Eski bozor', ?, ?, ?, 8)""",
+            work_date, f"{work_date} 11:00:00", f"{work_date} 19:00:00",
+        )
+        with mock.patch.object(excel, "TABLES_DIR", os.path.dirname(db.DB_PATH)):
+            path = await excel.generate_monthly_tabel(datetime.now().year, datetime.now().month)
+        sheet = load_workbook(path).active
+        header = [cell.value for cell in sheet[1]]
+        row = next(r for r in sheet.iter_rows(min_row=2, values_only=True) if r[0] == "Grafiksiz Xodim")
+        self.assertIsNone(row[header.index("Farq: kechikish (soat)")])
+
+
+class LateHoursTests(unittest.TestCase):
+    def test_late_hours(self):
+        from services.worktime import late_hours
+        at = lambda text: datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        self.assertEqual(late_hours(at("2026-11-02 10:30:00"), "09:00"), 1.5)
+        self.assertEqual(late_hours(at("2026-11-02 08:40:00"), "09:00"), 0.0)   # early
+        self.assertEqual(late_hours(at("2026-11-02 09:00:00"), "09:00"), 0.0)   # on time
+        self.assertEqual(late_hours(at("2026-11-02 22:30:00"), "22:00"), 0.5)   # night shift
+        self.assertEqual(late_hours(at("2026-11-03 00:30:00"), "22:00"), 2.5)   # after midnight
+        self.assertEqual(late_hours(at("2026-11-02 21:50:00"), "22:00"), 0.0)

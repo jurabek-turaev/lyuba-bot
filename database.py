@@ -359,7 +359,7 @@ async def get_month_attendance(year: int, month: int):
             """SELECT a.user_id, a.full_name, e.username, e.department,
                       CASE WHEN l.name IS NOT NULL AND a.branch IN (SELECT name FROM departments)
                            THEN l.name ELSE a.branch END,
-                      a.work_date, a.work_hours
+                      a.work_date, a.work_hours, a.check_in_time
                FROM attendance a
                LEFT JOIN employees e ON e.user_id = a.user_id
                LEFT JOIN locations l ON l.id = a.location_id

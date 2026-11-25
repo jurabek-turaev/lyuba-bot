@@ -43,6 +43,22 @@ def shift_hours(shift_start: str, shift_end: str) -> float:
     return round(delta.total_seconds() / 3600, 2)
 
 
+def late_hours(check_in: datetime, shift_start: str) -> float:
+    """
+    How many hours after the planned start the employee checked in (0 when on time or early).
+
+    The start is taken on the check-in day. A check-in more than 12 hours BEFORE that
+    start belongs to the previous day's shift: an overnight shift starting at 22:00 and
+    a check-in at 00:30 is 2.5 hours late, not 21.5 hours early.
+    """
+    planned = datetime.strptime(shift_start, "%H:%M")
+    start = check_in.replace(hour=planned.hour, minute=planned.minute, second=0, microsecond=0)
+    delta = check_in - start
+    if delta < -timedelta(hours=12):
+        delta += timedelta(days=1)
+    return max(0.0, delta.total_seconds() / 3600)
+
+
 STANDARD_MONTH_DAYS = 26  # standard number of working days in a month
 
 
