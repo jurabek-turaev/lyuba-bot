@@ -113,7 +113,7 @@ class RegistrationTests(FlowTestCase):
         await self.send(user, document={"file_id": "cv", "file_unique_id": "cv", "file_name": "cv.pdf"})
         await self.send(user, text="Valiyev Ali")
         await self.send(user, contact={"phone_number": "998901234567", "first_name": "Ali", "user_id": user})
-        await self.press(user, f"rf:position:{await self.department_id('Haydovchi')}")
+        await self.press(user, f"rf:department:{await self.department_id('Haydovchi')}")
         await self.send(user, text="4 000 000")
         self.assertSent(await self.press(user, "rf:start_availability:0"), "rf:preview:send")
 
@@ -325,10 +325,19 @@ class CatalogTests(FlowTestCase):
         zavod, haydovchi, savdo = (await self.location_id("Zavod"), await self.department_id("Haydovchi"),
                                    await self.department_id("Savdo"))
 
-        self.assertSent(await self.press(OWNER, f"ct:loff:{zavod}"), "yagona filiali", "Haydovchi")
+        # Zavod is the base work place: it cannot be deactivated, deleted or relinked
+        self.assertNotSent(await self.press(OWNER, f"ct:loc:{zavod}"), f"ct:loff:{zavod}", f"ct:ldel:{zavod}")
+        self.assertSent(await self.press(OWNER, f"ct:loffok:{zavod}"), "faolsizlantirib bo'lmaydi")
+        self.assertSent(await self.press(OWNER, f"ct:ldelok:{zavod}"), "O'chirib bo'lmaydi")
+        self.assertSent(await self.press(OWNER, f"ct:ldeps:{zavod}"), "faqat joylashuvi va guruhi")
+        self.assertIsNotNone(await db.get_base_location())
         self.assertSent(await self.press(OWNER, f"ct:doff:{haydovchi}"), "1 ta faol xodim")
 
-        await self.press(OWNER, f"ct:ldeps:{zavod}")
+        # the only shop of a department with active employees cannot lose it
+        shop = await self.location_id("Eski bozor")
+        await db.set_department_locations(haydovchi, [shop])
+        self.assertSent(await self.press(OWNER, f"ct:loff:{shop}"), "yagona filiali", "Haydovchi")
+        await self.press(OWNER, f"ct:ldeps:{shop}")
         await self.press(OWNER, f"ct:chk:{haydovchi}")
         self.assertSent(await self.press(OWNER, "ct:chkok"), "Saqlab bo'lmaydi")
         await self.press(OWNER, "ct:cancel")
@@ -370,9 +379,11 @@ class CatalogTests(FlowTestCase):
         self.assertSent(await self.press(OWNER, f"ct:ddelok:{await self.department_id('Savdo')}"), "O'chirib bo'lmaydi")
 
         await self.press(OWNER, "ct:newdep")
-        await self.send(OWNER, text="Qorovul")
-        await self.press(OWNER, f"ct:chk:{await self.location_id('Zavod')}")
-        self.assertSent(await self.press(OWNER, "ct:chkok"), "Bo'lim yaratildi", "avtomatik tanlanadi")
+        sent = await self.send(OWNER, text="Qorovul")
+        self.assertSent(sent, f"ct:chk:{await self.location_id('Eski bozor')}")
+        self.assertNotSent(sent, f"ct:chk:{await self.location_id('Zavod')}")  # Zavod is not a branch
+        # no shop ticked: a department without branches, it works at Zavod
+        self.assertSent(await self.press(OWNER, "ct:chkok"), "Bo'lim yaratildi", "Ish joyi: Zavod")
         guard = await self.department_id("Qorovul")
         await self.press(OWNER, f"ct:ddel:{guard}")
         await self.press(OWNER, f"ct:ddelok:{guard}")
@@ -430,7 +441,7 @@ class CatalogTests(FlowTestCase):
         self.restart()
         self.assertSent(await self.press(OWNER, "ct:ptok"), "eskirgan")
         # browsing screens need no memory and keep working
-        self.assertSent(await self.press(OWNER, "ct:locs"), "Filiallar")
+        self.assertSent(await self.press(OWNER, "ct:locs"), "Savdo filiallari")
 
     async def test_employees_cannot_use_the_admin_catalog(self):
         await self.make_employee(4008, "Xodim", "Savdo")
@@ -472,10 +483,9 @@ class TabelTests(FlowTestCase):
             path = await excel.generate_monthly_tabel(today.year, today.month)
         sheet = load_workbook(path).active
         row = next(r for r in sheet.iter_rows(values_only=True) if r[0] == "Tabel Xodim")
-        self.assertEqual(row[2], "Savdo bo'limi")
-        self.assertEqual(row[3], "Eski bozor, Koson Lyuba")
+        self.assertEqual(row[2:5], ("Savdo bo'limi", "—", "Eski bozor, Koson Lyuba"))
         factory = next(r for r in sheet.iter_rows(values_only=True) if r[0] == "Zavod Xodim")
-        self.assertEqual(factory[2:4], ("Ishlab chiqarish", "Zavod"))  # not "Ishlab chiqarish, Zavod"
+        self.assertEqual(factory[2:5], ("Ishlab chiqarish", "—", "Zavod"))  # not "Ishlab chiqarish, Zavod"
         header = [cell.value for cell in sheet[1]]
         self.assertEqual(row[header.index("Umumiy ish kuni")], 3)
         self.assertEqual(row[header.index("Umumiy soat")], 24)

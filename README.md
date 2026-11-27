@@ -8,8 +8,10 @@ video tasdig'i bilan qayd qiluvchi tizim. Oy oxirida `/tabel` orqali Excel hisob
 - Ishga ariza: nomzod botda anketa to'ldiradi (bot undan PDF rezyume yasaydi) yoki tayyor
   rezyumesini yuboradi → admin kartani oladi va tasdiqlaydi / rad etadi / bloklaydi.
   Tugallanmagan anketa bazada saqlanadi — bot qayta ishga tushsa ham yo'qolmaydi
-- Bo'lim va filiallarni admin botning o'zida boshqaradi (yaratish, tahrirlash, faolsizlantirish)
-- Bo'limda bitta filial bo'lsa — xodimga avtomatik, bir nechta bo'lsa — xodim o'zi tanlaydi
+- Bo'lim, filial va lavozimlarni admin botning o'zida boshqaradi (yaratish, tahrirlash, faolsizlantirish)
+- Xodim va nomzod: bo'lim → lavozim → (Savdo uchun) filial
+- Savdo filiali (do'kon) faqat Savdoda tanlanadi; Ishlab chiqarish va Rahbariyat Zavodda ishlaydi —
+  filial so'ralmaydi
 - Dumaloq video (video_note) tasdig'i — filialga biriktirilgan guruhga avtomatik yuboriladi
 - GPS masofa tekshiruvi (belgilangan `MAX_DISTANCE` metr ichida bo'lishi shart);
   faqat jonli (live) lokatsiya qabul qilinadi — statik va forward qilingani rad etiladi
@@ -34,20 +36,35 @@ tugmalarda bor — buyruq yozish shart emas.
 | `/hodimlar` | Faol xodimlar ro'yxati — tugma orqali ishdan chiqarish |
 | `/arizalar` | Ishga arizalar: yangi, suhbat kutilmoqda, bugungi suhbatlar (menyuda: 📝 Arizalar) |
 | `/ish_vaqti_belgilash` | Xodimning ish vaqti va oylik maoshini belgilash |
-| `/filiallar` | Bo'lim va filiallarni boshqarish (menyuda: 🗂 Bo'lim va filiallar) |
+| `/filiallar` | Bo'lim, filial va lavozimlarni boshqarish (menyuda: 🗂 Bo'lim va filiallar) |
+| 🏢 Bo'limni o'zgartirish | Xodimni boshqa bo'lim/lavozimga o'tkazish yoki o'zi qayta tanlashi uchun tozalash |
 | `/bolim_ozgartir [ID]` | O'zining yoki ko'rsatilgan xodimning bo'limini tozalaydi |
 | `/blokdan_chiqar ID` | Bloklangan foydalanuvchini blokdan chiqaradi |
 
-## Bo'lim va filiallar
+## Bo'lim, filial va lavozimlar
 
-Bo'limlar, filiallar, ularning koordinatalari va guruhlari **bazada** saqlanadi va
+Bo'limlar, filiallar, lavozimlar, filiallarning koordinatalari va guruhlari **bazada** saqlanadi va
 admin tomonidan `/filiallar` (yoki menyudagi «🗂 Bo'lim va filiallar») orqali boshqariladi.
 Yangi filial ochilsa, kodni o'zgartirish shart emas.
 
-- **Filial** — nomi, joylashuvi (koordinata) va video/xabarlar boradigan guruh.
-- **Bo'lim** — bir yoki bir nechta filialga biriktiriladi:
-  bitta filial bo'lsa xodimga avtomatik tanlanadi (masalan Zavod), bir nechta bo'lsa
-  xodim har safar o'zi tanlaydi (masalan Savdo do'konlari).
+- **🏪 Savdo filiali** (do'kon) — nomi, joylashuvi (koordinata) va video/xabarlar boradigan guruh.
+  Bo'limga biriktiriladi: bitta filial bo'lsa xodimga avtomatik tanlanadi, bir nechta bo'lsa
+  xodim har safar `/start` da o'zi tanlaydi.
+- **🏭 Zavod** — yagona asosiy ish joyi (filial emas): joylashuvi va guruhi bor. Filiali yo'q har
+  bir bo'lim (Ishlab chiqarish, Rahbariyat) xodimi shu yerda ishlaydi, unga filial so'ralmaydi.
+  Zavodni faolsizlantirib / o'chirib bo'lmaydi, faqat joylashuvi va guruhi o'zgartiriladi.
+- **Bo'lim** — yaratishda Savdo filiallari belgilanadi; hech biri belgilanmasa, bo'lim filialsiz
+  (Zavodda) ishlaydi.
+- **Lavozim** — bitta bo'limga tegishli (Savdo: sotuvchi, ofitsiant; Ishlab chiqarish:
+  stanok ustasi, pishiriqchi; Rahbariyat: menejer, buxgalter...). «💼 Lavozimlar» orqali
+  qo'shiladi — bir nechtasini bitta xabarda, har birini yangi qatordan yozish mumkin.
+  Xodim (`/start`) va nomzod (ariza) bo'limdan keyin lavozimni tanlaydi. Lavozimi yo'q
+  bo'limda bu savol berilmaydi — hammasi lavozimlar kiritilgunga qadar avvalgidek ishlaydi.
+
+**Xodimni ko'chirish** — «🏢 Bo'limni o'zgartirish»: xodim → bo'lim → lavozim. Ro'yxatda ⚠️
+belgisi — bo'limida lavozimlar bor, lekin o'ziga lavozim belgilanmagan xodim (lavozimlar
+paydo bo'lishidan oldin ishga kirganlar). «🔄 Xodimning o'zi qayta tanlasin» — bo'lim va
+lavozim tozalanadi, xodim `/start` bosganda o'zi tanlaydi.
 
 **Joylashuvni kiritish** — quyidagilardan biri yuboriladi, bot nuqtani xaritada ko'rsatib
 tasdiq so'raydi:
@@ -71,6 +88,8 @@ aylansa (ID o'zgaradi), bot buni ham o'zi kuzatadi.
 - Ochiq smena qaysi filialda boshlangan bo'lsa, o'sha yerda yopiladi — hatto filial
   keyinroq faolsizlantirilgan bo'lsa ham.
 - Filial nomi o'zgartirilsa, eski davomat yozuvlarida eski nom qoladi (tarix).
+- Lavozim faolsizlantirilsa, yangi xodim va nomzodlarga ko'rinmaydi; unda ishlayotganlarda
+  saqlanib qoladi. Arizada lavozim nomi yuborilgan paytdagidek qoladi.
 
 ## Ishga qabul qilish (arizalar)
 
@@ -79,12 +98,12 @@ Xodim bo'lmagan har kim `/start` bosib ishga ariza topshira oladi.
 **Nomzod tomoni**
 1. Shaxsiy ma'lumotlarga rozilik (ma'lumotlar faqat ishga qabul qilish uchun ishlatiladi).
 2. Ikki yo'l:
-   - **📝 Rezyume yaratish** — 17 ta savol: shaxsiy ma'lumotlar, rasm, lavozim, kutilayotgan
+   - **📝 Rezyume yaratish** — 17 ta savol: shaxsiy ma'lumotlar, rasm, bo'lim va lavozim, kutilayotgan
      maosh, ma'lumoti, ish tajribasi, tillar, ko'nikmalar. Bot javoblardan **PDF rezyume** yasaydi
      (RenderCV, A4). PDF universal: unda lavozim, maosh va ishga chiqish sanasi yo'q — ular faqat
      adminning kartasida ko'rinadi.
    - **📎 Tayyor rezyume** — o'z fayli (PDF, DOC, DOCX, JPG, PNG, 20 MB gacha) + ism, telefon,
-     lavozim, maosh.
+     bo'lim va lavozim, maosh.
 3. Oldindan ko'rish → yuborish, bo'limini tahrirlash yoki bekor qilish.
 
 Tugallanmagan anketa **bazada** saqlanadi: bot qayta ishga tushsa ham yo'qolmaydi, `/start`
@@ -103,7 +122,7 @@ uni davom ettirishni taklif qiladi. Yuborilgan arizani nomzod `/start` orqali qa
 - Nomzod **«🔁 Boshqa vaqt so'rash»** tugmasi bilan qulay vaqtini yozadi — admin uni
   «📅 Ko'chirish» tugmasi bilan oladi.
 - **Rad etish**: ichki sabab (nomzodga aytilmaydi) → xushmuomala rad xati → yuborish.
-- **Ishga qabul qilish**: nomzod xodimga aylanadi, bo'limi arizadagi lavozimdan avtomatik
+- **Ishga qabul qilish**: nomzod xodimga aylanadi, bo'limi va lavozimi arizadagidek avtomatik
   qo'yiladi. Ish vaqti va maoshini «🕘 Ish vaqtini belgilash» orqali kiriting.
 - Avval ishlagan nomzodning kartasida «♻️ Avval ishlagan, qayta topshirmoqda» belgisi bo'ladi.
 
@@ -161,6 +180,12 @@ tushganda katalog jadvallarini yaratadi va eski sozlamani **bir marta** ko'chira
 3 ta Savdo do'koni (`GROUP_ID` guruhi bilan) va «Zavod» (`PRODUCTION_*` qiymatlari bilan),
 unga Ishlab chiqarish, Haydovchi, I.T.R bo'limlari biriktiriladi. Xodimlar va davomat
 yozuvlari o'zgarmaydi, qayta ro'yxatdan o'tish kerak emas.
+
+Keyingi versiyada «Zavod» filiallar ro'yxatidan chiqib, **asosiy ish joyi**ga aylanadi
+(bo'limlar bilan bog'lanishlari olib tashlanadi — filiali yo'q bo'lim o'zi Zavodga boradi).
+
+«I.T.R xodimlari» bo'limi keyingi ishga tushishda avtomatik «Rahbariyat» deb nomlanadi
+(xodimlar o'z bo'limida qoladi; eski davomat yozuvlari tabelda Zavod bo'lib chiqaveradi).
 
 > Yangilashdan oldin bazaning nusxasini oling: `cp data/attendance.db data/attendance.backup.db`
 

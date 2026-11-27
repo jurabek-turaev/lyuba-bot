@@ -122,6 +122,8 @@ async def build_card_text(app: dict) -> str:
     title = f"📝 <b>Ariza #{app['id']}</b>"
     if app["position"]:
         title += f" · {escape(app['position'])}"
+        if app["department"] and app["position_id"] is not None and app["department"] != app["position"]:
+            title += f" ({escape(app['department'])})"
     lines = [title, ""]
 
     form = app["resume_data"] or {}

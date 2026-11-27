@@ -1,5 +1,10 @@
 """
-Admin management of departments and locations (OWNER_ID only, private chat).
+Admin management of departments, Savdo branches, the base work place (Zavod) and
+positions (OWNER_ID only, private chat).
+
+Branches (Savdo shops) are linked to departments; the employee of such a department
+chooses a shop. A department without branches (Ishlab chiqarish, Rahbariyat) works at
+Zavod: it is the one base work place, never linked, never deactivated or deleted.
 
 Opened with the menu button "🗂 Bo'lim va filiallar" or /filiallar.
 
@@ -9,7 +14,11 @@ Create / edit wizards keep a "draft" in the FSM data:
 
     new location:   name -> point -> confirm point -> group -> departments
     new department: name -> locations
+    new positions:  names (one per line) inside a department
     edit:           one field (name / point / group / links)
+
+Positions belong to ONE department. A department without active positions works as
+before positions existed: neither the employee nor the candidate is asked the position.
 
 Callback data always starts with "ct:".
 Deleting is allowed only for records nobody ever used; otherwise deactivate.
@@ -36,6 +45,7 @@ router.callback_query.filter(F.from_user.id == OWNER_ID)
 
 MIN_NAME_LEN = 2
 MAX_NAME_LEN = 40
+MAX_NEW_POSITIONS = 20  # names in one message
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 STALE_TEXT = "Bu tugma eskirgan. Menyudan «🗂 Bo'lim va filiallar»ni qayta oching."
 
@@ -167,13 +177,17 @@ async def _departments_losing_last_location(location_id: int, keep_ids=None) -> 
     return names
 
 
-async def _name_error(kind: str, name: str, exclude_id: int | None) -> str | None:
+async def _name_error(kind: str, name: str, exclude_id: int | None, department_id: int | None = None) -> str | None:
     if name.startswith("/"):
         return "⚠️ Nom «/» bilan boshlanmasin."
     if len(name) < MIN_NAME_LEN:
         return "⚠️ Nom juda qisqa."
     if len(name) > MAX_NAME_LEN:
         return f"⚠️ Nom {MAX_NAME_LEN} belgidan oshmasin."
+    if kind == "pos":
+        if await db.position_name_taken(department_id, name, exclude_id):
+            return "⚠️ Bu bo'limda shunday lavozim bor. Boshqa nom yozing."
+        return None
     table = "locations" if kind == "loc" else "departments"
     if await db.catalog_name_taken(table, name, exclude_id):
         return "⚠️ Bu nom band. Boshqa nom yozing."
@@ -185,28 +199,74 @@ async def _name_error(kind: str, name: str, exclude_id: int | None) -> str | Non
 # ===========================
 async def home_screen():
     departments = await db.list_departments(active_only=False)
-    locations = await db.list_locations(active_only=False)
+    locations = await db.list_locations(active_only=False, branches_only=True)
+    base = await db.get_base_location()
+    positions = 0
+    for department_id, _name, is_active in departments:
+        if is_active:
+            positions += len(await db.list_positions(department_id))
     text = (
-        "🗂 <b>Bo'lim va filiallar</b>\n\n"
+        "🗂 <b>Bo'lim, filial va lavozimlar</b>\n\n"
         f"🏢 Bo'limlar: {sum(1 for d in departments if d[2])} faol / {len(departments)}\n"
-        f"📍 Filiallar: {sum(1 for loc in locations if loc[5])} faol / {len(locations)}"
+        f"🏪 Savdo filiallari: {sum(1 for loc in locations if loc[5])} faol / {len(locations)}\n"
+        f"🏭 Zavod: {'✅ kiritilgan' if base else '⚠️ kiritilmagan'}\n"
+        f"💼 Lavozimlar: {positions} faol"
     )
     return text, _kb([
-        [_b("🏢 Bo'limlar", "ct:deps"), _b("📍 Filiallar", "ct:locs")],
+        [_b("🏢 Bo'limlar", "ct:deps"), _b("🏪 Savdo filiallari", "ct:locs")],
+        [_b("🏭 Zavod", "ct:base"), _b("💼 Lavozimlar", "ct:poss")],
         [_b("✖️ Yopish", "ct:close")],
     ])
 
 
 async def locations_screen():
     rows = [
-        [_b(("📍 " if is_active else "🚫 ") + name, f"ct:loc:{location_id}")]
-        for location_id, name, _lat, _lon, _group, is_active in await db.list_locations(active_only=False)
+        [_b(("🏪 " if is_active else "🚫 ") + name, f"ct:loc:{location_id}")]
+        for location_id, name, _lat, _lon, _group, is_active
+        in await db.list_locations(active_only=False, branches_only=True)
     ]
     rows += [[_b("➕ Yangi filial", "ct:newloc")], [_b("◀️ Orqaga", "ct:home")]]
-    return "📍 <b>Filiallar</b>\n<i>🚫 — faol emas</i>", _kb(rows)
+    return "🏪 <b>Savdo filiallari</b>\n<i>🚫 — faol emas</i>", _kb(rows)
+
+
+async def _is_base(location_id: int) -> bool:
+    base = await db.get_base_location()
+    return base is not None and base[0] == location_id
+
+
+async def base_screen():
+    """Zavod: the base work place of every department without branches."""
+    base = await db.get_base_location()
+    if base is None:
+        return (
+            "🏭 <b>Zavod</b> — ⚠️ hali kiritilmagan\n\n"
+            "Filiali yo'q bo'limlar (Ishlab chiqarish, Rahbariyat) xodimlari Zavodda ishlaydi. "
+            "Uning joylashuvi va guruhini kiriting.",
+            _kb([[_b("➕ Zavodni kiritish", "ct:newbase")], [_b("◀️ Orqaga", "ct:home")]]),
+        )
+    location_id, name, lat, lon, group_id, _ = base
+    attendance_count, open_shifts, _ = await db.location_usage(location_id)
+    departments = [
+        escape(dep_name) for dep_id, dep_name, is_active in await db.list_departments()
+        if not await db.get_department_locations(dep_id, active_only=False)
+    ]
+    text = (
+        f"🏭 <b>{escape(name)}</b> — asosiy ish joyi\n\n"
+        f"🌐 <code>{lat}, {lon}</code> · {_map_link(lat, lon)}\n"
+        f"👥 Guruh: {await _group_label(group_id)}\n"
+        f"🏢 Bo'limlar: {', '.join(departments) or '—'}\n"
+        f"📊 Davomat yozuvlari: {attendance_count} · ochiq smena: {open_shifts}\n\n"
+        "<i>Filiali yo'q har bir bo'lim xodimi shu yerda ishlaydi, filial so'ralmaydi.</i>"
+    )
+    return text, _kb([
+        [_b("🌐 Joylashuvi", f"ct:lpoint:{location_id}"), _b("👥 Guruhi", f"ct:lgroup:{location_id}")],
+        [_b("◀️ Orqaga", "ct:home")],
+    ])
 
 
 async def location_screen(location_id: int):
+    if await _is_base(location_id):
+        return await base_screen()
     row = await db.get_location(location_id)
     if row is None:
         return None
@@ -216,7 +276,7 @@ async def location_screen(location_id: int):
     department_names = ", ".join(escape(d[1]) + ("" if d[2] else " 🚫") for d in departments) or "—"
 
     text = (
-        f"📍 <b>{escape(name)}</b> — {'✅ faol' if is_active else '🚫 faol emas'}\n\n"
+        f"🏪 <b>{escape(name)}</b> — {'✅ faol' if is_active else '🚫 faol emas'}\n\n"
         f"🌐 <code>{lat}, {lon}</code> · {_map_link(lat, lon)}\n"
         f"👥 Guruh: {await _group_label(group_id)}\n"
         f"🏢 Bo'limlar: {department_names}\n"
@@ -230,7 +290,7 @@ async def location_screen(location_id: int):
     ]
     if attendance_count == 0 and chosen_by == 0:
         rows.append([_b("🗑 O'chirish", f"ct:ldel:{location_id}")])
-    rows.append([_b("◀️ Filiallar", "ct:locs")])
+    rows.append([_b("◀️ Orqaga", "ct:locs")])
     return text, _kb(rows)
 
 
@@ -253,26 +313,104 @@ async def department_screen(department_id: int):
     active_locations = [loc for loc in locations if loc[5]]
     location_names = ", ".join(escape(loc[1]) + ("" if loc[5] else " 🚫") for loc in locations) or "—"
 
-    if not active_locations:
-        rule = "⚠️ Faol filial yo'q — xodimlar ishga kela olmaydi."
+    if not locations:
+        base = await db.get_base_location()
+        workplace = (f"🏭 Ish joyi: {escape(base[1])} — filial yo'q, xodimga avtomatik."
+                     if base else "⚠️ Filial ham, Zavod ham yo'q — xodimlar ishga kela olmaydi.")
+    elif not active_locations:
+        workplace = f"🏪 Filiallar: {location_names}\n⚠️ Faol filial yo'q — xodimlar ishga kela olmaydi."
     elif len(active_locations) == 1:
-        rule = "ℹ️ Bitta filial — xodimga avtomatik tanlanadi."
+        workplace = f"🏪 Filiallar: {location_names}\nℹ️ Bitta filial — xodimga avtomatik tanlanadi."
     else:
-        rule = "ℹ️ Bir nechta filial — xodim har safar o'zi tanlaydi."
+        workplace = f"🏪 Filiallar: {location_names}\nℹ️ Bir nechta filial — xodim har safar o'zi tanlaydi."
+
+    positions = await db.list_positions(department_id)
+    position_names = ", ".join(escape(p[1]) for p in positions) or "— (lavozim so'ralmaydi)"
 
     text = (
         f"🏢 <b>{escape(name)}</b> — {'✅ faol' if is_active else '🚫 faol emas'}\n\n"
         f"👥 Faol xodimlar: {active_employees}\n"
-        f"📍 Filiallar: {location_names}\n{rule}"
+        f"💼 Lavozimlar: {position_names}\n"
+        f"{workplace}"
     )
     rows = [
-        [_b("✏️ Nomi", f"ct:dname:{department_id}"), _b("📍 Filiallari", f"ct:dlocs:{department_id}")],
+        [_b("✏️ Nomi", f"ct:dname:{department_id}"), _b("🏪 Filiallari", f"ct:dlocs:{department_id}")],
         [_b("🚫 Faolsizlantirish", f"ct:doff:{department_id}") if is_active
          else _b("✅ Faollashtirish", f"ct:don:{department_id}")],
     ]
     if all_employees == 0:
         rows.append([_b("🗑 O'chirish", f"ct:ddel:{department_id}")])
-    rows.append([_b("◀️ Bo'limlar", "ct:deps")])
+    rows.append([_b("◀️ Orqaga", "ct:deps")])
+    return text, _kb(rows)
+
+
+async def positions_home_screen():
+    rows = []
+    for department_id, name, is_active in await db.list_departments(active_only=False):
+        count = len(await db.list_positions(department_id))
+        rows.append([_b(("🏢 " if is_active else "🚫 ") + f"{name} ({count})", f"ct:dpos:{department_id}")])
+    rows.append([_b("◀️ Orqaga", "ct:home")])
+    return (
+        "💼 <b>Lavozimlar</b>\n\nQaysi bo'limning lavozimlari? <i>(qavsda — faol lavozimlar soni)</i>",
+        _kb(rows),
+    )
+
+
+async def department_positions_screen(department_id: int):
+    row = await db.get_department(department_id)
+    if row is None:
+        return None
+    _, name, _ = row
+    positions = await db.list_positions(department_id, active_only=False)
+
+    lines = [f"💼 <b>{escape(name)}</b> lavozimlari\n"]
+    if not positions:
+        lines.append("Hozircha lavozim yo'q — xodim va nomzodga lavozim so'ralmaydi.")
+    for position_id, position_name, is_active in positions:
+        active_employees, _, _ = await db.position_usage(position_id)
+        mark = "" if is_active else " 🚫"
+        lines.append(f"• {escape(position_name)}{mark} — {active_employees} xodim")
+    missing = [e for e in await db.employees_without_position() if e[2] == name]
+    if missing:
+        lines.append(
+            f"\n⚠️ Lavozimi belgilanmagan faol xodimlar: {len(missing)} ta. "
+            "Ularni «🏢 Bo'limni o'zgartirish» orqali belgilang."
+        )
+
+    rows = [
+        [_b(("💼 " if is_active else "🚫 ") + position_name, f"ct:pos:{position_id}")]
+        for position_id, position_name, is_active in positions
+    ]
+    rows += [
+        [_b("➕ Lavozim qo'shish", f"ct:newpos:{department_id}")],
+        [_b("◀️ Orqaga", "ct:poss")],
+    ]
+    return "\n".join(lines), _kb(rows)
+
+
+async def position_screen(position_id: int):
+    row = await db.get_position(position_id)
+    if row is None:
+        return None
+    _, department_id, name, is_active = row
+    department = await db.get_department(department_id)
+    active_employees, all_employees, applications = await db.position_usage(position_id)
+
+    text = (
+        f"💼 <b>{escape(name)}</b> — {'✅ faol' if is_active else '🚫 faol emas'}\n\n"
+        f"🏢 Bo'lim: {escape(department[1]) if department else '—'}\n"
+        f"👥 Faol xodimlar: {active_employees} · 📝 arizalar: {applications}"
+    )
+    if not is_active:
+        text += "\n\n<i>Faol emas: yangi xodim va nomzodlarga ko'rinmaydi, avvalgilarda saqlanib qoladi.</i>"
+    rows = [
+        [_b("✏️ Nomi", f"ct:pname:{position_id}"),
+         _b("🚫 Faolsizlantirish", f"ct:poff:{position_id}") if is_active
+         else _b("✅ Faollashtirish", f"ct:pon:{position_id}")],
+    ]
+    if all_employees == 0 and applications == 0:
+        rows.append([_b("🗑 O'chirish", f"ct:pdel:{position_id}")])
+    rows.append([_b("◀️ Orqaga", f"ct:dpos:{department_id}")])
     return text, _kb(rows)
 
 
@@ -284,6 +422,16 @@ async def _screen_for(target: str):
     if target.startswith("ct:dep:"):
         screen = await department_screen(_arg(target))
         return screen or await departments_screen()
+    if target.startswith("ct:dpos:"):
+        screen = await department_positions_screen(_arg(target))
+        return screen or await positions_home_screen()
+    if target.startswith("ct:pos:"):
+        screen = await position_screen(_arg(target))
+        return screen or await positions_home_screen()
+    if target == "ct:poss":
+        return await positions_home_screen()
+    if target == "ct:base":
+        return await base_screen()
     if target == "ct:locs":
         return await locations_screen()
     if target == "ct:deps":
@@ -302,14 +450,17 @@ async def open_catalog(message: types.Message, state: FSMContext):
     await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
 
-@router.callback_query(F.data.in_({"ct:home", "ct:locs", "ct:deps"}))
+@router.callback_query(F.data.in_({"ct:home", "ct:locs", "ct:deps", "ct:poss", "ct:base"}))
 async def browse_list(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await _edit(callback.message, *await _screen_for(callback.data))
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("ct:loc:") | F.data.startswith("ct:dep:"))
+@router.callback_query(
+    F.data.startswith("ct:loc:") | F.data.startswith("ct:dep:")
+    | F.data.startswith("ct:dpos:") | F.data.startswith("ct:pos:")
+)
 async def browse_card(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await _edit(callback.message, *await _screen_for(callback.data))
@@ -319,7 +470,7 @@ async def browse_card(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "ct:close")
 async def close_catalog(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await _edit(callback.message, "🗂 Bo'lim va filiallar yopildi.")
+    await _edit(callback.message, "🗂 Bo'lim, filial va lavozimlar yopildi.")
     await callback.answer()
 
 
@@ -330,7 +481,7 @@ async def close_catalog(callback: types.CallbackQuery, state: FSMContext):
 async def location_deactivate_ask(callback: types.CallbackQuery):
     location_id = _arg(callback.data)
     row = await db.get_location(location_id)
-    if row is None:
+    if row is None or await _is_base(location_id):
         await callback.answer("Filial topilmadi.", show_alert=True)
         return
     blocked = await _departments_losing_last_location(location_id)
@@ -356,6 +507,9 @@ async def location_deactivate_ask(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("ct:loffok:"))
 async def location_deactivate(callback: types.CallbackQuery):
     location_id = _arg(callback.data)
+    if await _is_base(location_id):
+        await callback.answer("Zavodni faolsizlantirib bo'lmaydi.", show_alert=True)
+        return
     blocked = await _departments_losing_last_location(location_id)
     if blocked:  # something changed since the question
         await callback.answer(f"Faolsizlantirib bo'lmaydi: {', '.join(blocked)}", show_alert=True)
@@ -377,7 +531,7 @@ async def location_activate(callback: types.CallbackQuery):
 async def location_delete_ask(callback: types.CallbackQuery):
     location_id = _arg(callback.data)
     row = await db.get_location(location_id)
-    if row is None:
+    if row is None or await _is_base(location_id):
         await callback.answer("Filial topilmadi.", show_alert=True)
         return
     await _edit(
@@ -391,7 +545,7 @@ async def location_delete_ask(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("ct:ldelok:"))
 async def location_delete(callback: types.CallbackQuery):
     location_id = _arg(callback.data)
-    if not await db.delete_location(location_id):
+    if await _is_base(location_id) or not await db.delete_location(location_id):
         await callback.answer(
             "O'chirib bo'lmaydi: filial davomatda ishlatilgan. Faolsizlantirish mumkin.", show_alert=True
         )
@@ -473,6 +627,51 @@ async def department_delete(callback: types.CallbackQuery):
     await callback.answer("O'chirildi")
 
 
+@router.callback_query(F.data.startswith("ct:poff:") | F.data.startswith("ct:pon:"))
+async def position_toggle(callback: types.CallbackQuery):
+    position_id = _arg(callback.data)
+    if await db.get_position(position_id) is None:
+        await callback.answer("Lavozim topilmadi.", show_alert=True)
+        return
+    active = callback.data.startswith("ct:pon:")
+    await db.set_position_active(position_id, active)
+    await _edit(callback.message, *await _screen_for(f"ct:pos:{position_id}"))
+    await callback.answer("Faollashtirildi" if active else "Faolsizlantirildi")
+
+
+@router.callback_query(F.data.startswith("ct:pdel:"))
+async def position_delete_ask(callback: types.CallbackQuery):
+    position_id = _arg(callback.data)
+    row = await db.get_position(position_id)
+    if row is None:
+        await callback.answer("Lavozim topilmadi.", show_alert=True)
+        return
+    await _edit(
+        callback.message,
+        f"🗑 <b>{escape(row[2])}</b> lavozimi butunlay o'chirilsinmi?\n<i>Bu amalni qaytarib bo'lmaydi.</i>",
+        _kb([[_b("🗑 Ha, o'chirish", f"ct:pdelok:{position_id}"), _b("❌ Yo'q", f"ct:pos:{position_id}")]]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ct:pdelok:"))
+async def position_delete(callback: types.CallbackQuery):
+    position_id = _arg(callback.data)
+    row = await db.get_position(position_id)
+    if row is None:
+        await callback.answer("Lavozim topilmadi.", show_alert=True)
+        await _edit(callback.message, *await positions_home_screen())
+        return
+    if not await db.delete_position(position_id):
+        await callback.answer(
+            "O'chirib bo'lmaydi: bu lavozimda xodim yoki ariza bor. Faolsizlantirish mumkin.", show_alert=True
+        )
+        await _edit(callback.message, *await _screen_for(f"ct:pos:{position_id}"))
+        return
+    await _edit(callback.message, *await _screen_for(f"ct:dpos:{row[1]}"))
+    await callback.answer("O'chirildi")
+
+
 # ===========================
 # Wizards: entry points
 # ===========================
@@ -484,8 +683,14 @@ async def _start_wizard(state: FSMContext, draft: dict):
 async def _ask_name(bot: Bot, state: FSMContext, draft: dict, **where):
     await state.set_state(CatalogState.entering_name)
     await state.update_data(draft={**draft, "step": "name"})
-    what = "filial" if draft["kind"] == "loc" else "bo'lim"
-    if draft["action"] == "new":
+    what = {"loc": "filial", "dep": "bo'lim", "pos": "lavozim"}[draft["kind"]]
+    if draft["action"] == "new" and draft["kind"] == "pos":
+        text = (
+            f"➕ <b>{escape(draft['dept_name'])}</b> bo'limiga yangi lavozim\n\n"
+            "Lavozim nomini yozib yuboring. Bir nechtasini birdaniga qo'shish uchun "
+            "har birini yangi qatordan yozing, masalan:\n<i>Sotuvchi\nOfitsiant\nFarrosh</i>"
+        )
+    elif draft["action"] == "new":
         text = f"➕ <b>Yangi {what}</b>\n\n{what.capitalize()} nomini yozib yuboring:"
     else:
         text = f"✏️ <b>{escape(draft['name'])}</b>\n\nYangi nomni yozib yuboring:"
@@ -530,7 +735,7 @@ async def _checklist_items(draft: dict) -> list:
     if draft["kind"] == "loc":  # a location chooses its departments
         items = await db.list_departments(active_only=False)
     else:  # a department chooses its locations
-        items = [(row[0], row[1], row[5]) for row in await db.list_locations(active_only=False)]
+        items = [(row[0], row[1], row[5]) for row in await db.list_locations(active_only=False, branches_only=True)]
     linked = set(draft.get("checked", []))
     return [item for item in items if item[2] or item[0] in linked]
 
@@ -552,8 +757,9 @@ async def _ask_links(bot: Bot, state: FSMContext, draft: dict, **where):
         )
     else:
         text = (
-            f"📍 <b>{escape(draft['name'])}</b> qaysi filial(lar)da ishlaydi? Belgilang.\n\n"
-            "<i>Bitta filial — xodimga avtomatik tanlanadi. Bir nechta — xodim o'zi tanlaydi.</i>"
+            f"🏪 <b>{escape(draft['name'])}</b> qaysi Savdo filial(lar)ida ishlaydi? Belgilang.\n\n"
+            "<i>Hech biri belgilanmasa — bo'lim filialsiz: xodimlar Zavodda ishlaydi, filial so'ralmaydi. "
+            "Bitta filial — xodimga avtomatik tanlanadi. Bir nechta — xodim o'zi tanlaydi.</i>"
         )
     await _show(bot, state, text, _kb(rows), **where)
 
@@ -564,6 +770,24 @@ async def wizard_new(callback: types.CallbackQuery, state: FSMContext, bot: Bot)
     draft = {"kind": kind, "action": "new", "back": "ct:locs" if kind == "loc" else "ct:deps"}
     await _start_wizard(state, draft)
     await _ask_name(bot, state, draft, source=callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ct:newbase")
+async def wizard_new_base(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+    """Zavod is entered once (new install): point -> group. The name is fixed."""
+    if await db.get_base_location() is not None:
+        await _edit(callback.message, *await base_screen())
+        await callback.answer("Zavod allaqachon kiritilgan.")
+        return
+    if await db.catalog_name_taken("locations", db.FACTORY_LOCATION_NAME):
+        await callback.answer(
+            f"«{db.FACTORY_LOCATION_NAME}» nomli filial bor. Avval uni boshqa nomga o'zgartiring.", show_alert=True
+        )
+        return
+    draft = {"kind": "loc", "action": "new", "base": True, "name": db.FACTORY_LOCATION_NAME, "back": "ct:base"}
+    await _start_wizard(state, draft)
+    await _ask_point(bot, state, draft, source=callback.message)
     await callback.answer()
 
 
@@ -579,6 +803,9 @@ async def wizard_edit_location(callback: types.CallbackQuery, state: FSMContext,
         return
     _, name, lat, lon, group_id, _ = row
     action = callback.data.split(":")[1][1:]  # lname -> name, lpoint -> point, ...
+    if action in ("name", "deps") and await _is_base(location_id):
+        await callback.answer("Zavodning faqat joylashuvi va guruhi o'zgartiriladi.", show_alert=True)
+        return
     draft = {
         "kind": "loc", "action": action, "id": location_id, "name": name,
         "old_lat": lat, "old_lon": lon, "group_id": group_id, "back": f"ct:loc:{location_id}",
@@ -614,6 +841,54 @@ async def wizard_edit_department(callback: types.CallbackQuery, state: FSMContex
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("ct:newpos:"))
+async def wizard_new_positions(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+    department_id = _arg(callback.data)
+    row = await db.get_department(department_id)
+    if row is None:
+        await callback.answer("Bo'lim topilmadi.", show_alert=True)
+        return
+    draft = {"kind": "pos", "action": "new", "dept_id": department_id, "dept_name": row[1],
+             "back": f"ct:dpos:{department_id}"}
+    await _start_wizard(state, draft)
+    await _ask_name(bot, state, draft, source=callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ct:pname:"))
+async def wizard_rename_position(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+    position_id = _arg(callback.data)
+    row = await db.get_position(position_id)
+    if row is None:
+        await callback.answer("Lavozim topilmadi.", show_alert=True)
+        return
+    _, department_id, name, _ = row
+    draft = {"kind": "pos", "action": "name", "id": position_id, "dept_id": department_id, "name": name,
+             "back": f"ct:pos:{position_id}"}
+    await _start_wizard(state, draft)
+    await _ask_name(bot, state, draft, source=callback.message)
+    await callback.answer()
+
+
+async def _new_position_names(text: str, department_id: int) -> tuple[list, str | None]:
+    """(names, error) of the positions typed one per line; empty lines are ignored."""
+    names = [_clean_name(line) for line in text.splitlines()]
+    names = [name for name in names if name]
+    if not names:
+        return [], "⚠️ Lavozim nomini yozing."
+    if len(names) > MAX_NEW_POSITIONS:
+        return [], f"⚠️ Bir martada {MAX_NEW_POSITIONS} tagacha lavozim qo'shish mumkin."
+    seen = set()
+    for name in names:
+        if name.casefold() in seen:
+            return [], f"⚠️ «{escape(name)}» ikki marta yozilgan."
+        seen.add(name.casefold())
+        error = await _name_error("pos", name, None, department_id)
+        if error:
+            return [], f"{error}\n(«{escape(name)}»)" if len(names) > 1 else error
+    return names, None
+
+
 # ===========================
 # Wizards: steps
 # ===========================
@@ -631,8 +906,21 @@ async def on_name(message: types.Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
 
+    if draft["kind"] == "pos" and draft["action"] == "new":
+        names, error = await _new_position_names(message.text, draft["dept_id"])
+        if error:
+            await message.answer(error, parse_mode="HTML")
+            return
+        if await db.get_department(draft["dept_id"]) is None:
+            await message.answer("⚠️ Bo'lim topilmadi.")
+            await state.clear()
+            return
+        await db.create_positions(draft["dept_id"], names)
+        await _finish(bot, state, draft["back"], chat_id=message.chat.id)
+        return
+
     name = _clean_name(message.text)
-    error = await _name_error(draft["kind"], name, draft.get("id"))
+    error = await _name_error(draft["kind"], name, draft.get("id"), draft.get("dept_id"))
     if error:
         await message.answer(error)
         return
@@ -640,6 +928,8 @@ async def on_name(message: types.Message, state: FSMContext, bot: Bot):
     if draft["action"] == "name":  # rename
         if draft["kind"] == "loc":
             await db.rename_location(draft["id"], name)
+        elif draft["kind"] == "pos":
+            await db.rename_position(draft["id"], name)
         else:
             await db.rename_department(draft["id"], name)
         await _finish(bot, state, draft["back"], chat_id=message.chat.id)
@@ -780,6 +1070,15 @@ async def on_group(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
     if draft["action"] == "group":
         await db.update_location_group(draft["id"], group_id)
         await _finish(bot, state, draft["back"], source=callback.message)
+    elif draft.get("base"):  # the new Zavod has no departments to choose: it is saved
+        if await db.get_base_location() is not None:
+            await callback.answer("Zavod allaqachon kiritilgan.", show_alert=True)
+            await _finish(bot, state, "ct:base", source=callback.message)
+            return
+        await db.create_location(draft["name"], draft["lat"], draft["lon"], group_id, [], base=True)
+        await _finish(bot, state, "ct:base", source=callback.message)
+        await callback.answer("Zavod saqlandi")
+        return
     else:  # a new location continues with its departments
         draft.update(group_id=group_id, checked=[])
         await _ask_links(bot, state, draft, source=callback.message)
@@ -835,12 +1134,14 @@ async def on_check_save(callback: types.CallbackQuery, state: FSMContext, bot: B
             )
             return
         await db.set_location_departments(draft["id"], checked)
-    else:  # edit the locations of a department
+    else:  # edit the branches of a department; none = the department works at Zavod
         active_employees, _ = await db.department_usage(draft["id"])
-        active_location_ids = {row[0] for row in await db.list_locations()}
-        if active_employees and not active_location_ids & set(checked):
+        active_branch_ids = {row[0] for row in await db.list_locations(branches_only=True)}
+        had_branches = bool(await db.get_department_locations(draft["id"], active_only=False))
+        if active_employees and (checked or had_branches) and not active_branch_ids & set(checked):
             await callback.answer(
-                f"Kamida bitta faol filial tanlang: bo'limda {active_employees} ta faol xodim bor.",
+                f"Kamida bitta faol filial tanlang: bo'limda {active_employees} ta faol xodim bor. "
+                "Bo'limni filialsiz (Zavod) qilish uchun avval xodimlarni boshqa bo'limga o'tkazing.",
                 show_alert=True,
             )
             return
@@ -861,4 +1162,4 @@ async def on_cancel(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
 # Must stay LAST: buttons of this module that no handler above accepted
 @router.callback_query(F.data.startswith("ct:"))
 async def on_stale_button(callback: types.CallbackQuery):
-    await callback.answer(STALE_TEXT, show_alert=True)
+    await callback.answer(STALE_TEXT, show_alert=True)

@@ -1,10 +1,13 @@
 """
-Where an employee works: department and location, read from the database.
+Where an employee works: department, position and location, read from the database.
 
 Rules (they replace the old hardcoded "Savdo" checks):
-- a department with ONE active location: the employee gets it automatically;
-- a department with SEVERAL active locations: the employee chooses one
-  (the choice is remembered in employees.location_id);
+- a department with active positions: the employee chooses one after the department
+  (a department without positions skips that question);
+- a department WITHOUT branches (Ishlab chiqarish, Rahbariyat) works at the base work
+  place, Zavod: nothing is asked;
+- a department with branches (Savdo shops): ONE active branch is chosen automatically,
+  SEVERAL: the employee chooses one (remembered in employees.location_id);
 - an employee whose department is missing or deactivated chooses a department again.
 """
 from dataclasses import dataclass
@@ -24,6 +27,13 @@ class Location:
 @dataclass(frozen=True)
 class Department:
     id: int
+    name: str
+
+
+@dataclass(frozen=True)
+class Position:
+    id: int
+    department_id: int
     name: str
 
 
@@ -64,8 +74,40 @@ async def list_departments() -> list[Department]:
     return [Department(dep_id, name) for dep_id, name, _ in await db.list_departments()]
 
 
+async def department_positions(department_id: int) -> list[Position]:
+    """Active positions of a department, in creation order."""
+    return [Position(pos_id, department_id, name) for pos_id, name, _ in await db.list_positions(department_id)]
+
+
+async def get_position(position_id: int) -> Position | None:
+    """Active position of an active department by id, or None."""
+    row = await db.get_position(position_id)
+    if row is None or not row[3] or await get_department(row[1]) is None:
+        return None
+    return Position(row[0], row[1], row[2])
+
+
+async def get_base_location() -> Location | None:
+    """The active base work place (Zavod), or None."""
+    row = await db.get_base_location()
+    return _location(row) if row and row[5] else None
+
+
 async def department_locations(department_id: int) -> list[Location]:
-    return [_location(row) for row in await db.get_department_locations(department_id)]
+    """
+    Where the department's employees may check in: its active branches, or the base
+    work place when the department has no branches at all. A department whose
+    branches are all deactivated gets nothing (it does not move to Zavod silently).
+    """
+    branches = await db.get_department_locations(department_id, active_only=False)
+    if branches:
+        return [_location(row) for row in branches if row[5]]
+    base = await get_base_location()
+    return [base] if base else []
+
+
+async def has_branches(department_id: int) -> bool:
+    return bool(await db.get_department_locations(department_id, active_only=False))
 
 
 async def employee_placement(user_id: int):
@@ -98,4 +140,4 @@ async def current_location(user_id: int, chosen_id: int | None = None) -> Locati
         return by_id[chosen_id]
     if len(locations) == 1:
         return locations[0]
-    return by_id.get(last_location_id)
+    return by_id.get(last_location_id)
