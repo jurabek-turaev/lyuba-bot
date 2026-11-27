@@ -82,11 +82,12 @@ def _pay_columns(settings, worked_days: list, check_ins: list | None = None) -> 
 async def generate_monthly_tabel(year: int, month: int) -> str:
     """
     Build one tabel for the given month:
-    Xodim F.I.Sh. | Username | Lavozim | Do'kon/Guruh | <every date> |
+    Xodim F.I.Sh. | Username | Bo'lim | Lavozim | Filial | <every date> |
     Umumiy ish kuni | Umumiy soat | <schedule, norms, overtime, fixed salary, hourly rate, earned salary>
 
-    All departments (Savdo, Ishlab chiqarish, Haydovchi, I.T.R) are in one sheet,
-    told apart by the "Lavozim" column.
+    All departments are in one sheet, told apart by the "Bo'lim" column. Bo'lim and
+    Lavozim are the employee's current ones; Filial lists where the employee checked
+    in this month (Zavod for Ishlab chiqarish / Rahbariyat, the shops for Savdo).
 
     Returns the path of the created .xlsx file.
     """
@@ -99,12 +100,13 @@ async def generate_monthly_tabel(year: int, month: int) -> str:
 
     # user_id bo'yicha guruhlash
     employees = {}
-    for user_id, full_name, username, department, branch, work_date, work_hours, check_in_time in rows:
+    for user_id, full_name, username, department, position, branch, work_date, work_hours, check_in_time in rows:
         if user_id not in employees:
             employees[user_id] = {
                 "name": full_name,
                 "username": username if username else "Mavjud emas",
                 "department": department if department else "Aniqlanmagan",
+                "position": position if position else "—",
                 "branches": [],
                 "hours_by_date": {},
                 "first_check_in": {},  # date label -> earliest check-in of that day
@@ -127,7 +129,7 @@ async def generate_monthly_tabel(year: int, month: int) -> str:
     ws.title = f"{month:02d}.{year}"
 
     header = (
-        ["Xodim F.I.Sh.", "Username", "Lavozim", "Do'kon/Guruh"]
+        ["Xodim F.I.Sh.", "Username", "Bo'lim", "Lavozim", "Filial"]
         + date_labels
         + ["Umumiy ish kuni", "Umumiy soat"]
         + PAY_HEADER
@@ -139,7 +141,7 @@ async def generate_monthly_tabel(year: int, month: int) -> str:
         cell.alignment = Alignment(wrap_text=True, vertical="center")
 
     for user_id, emp in sorted(employees.items(), key=lambda item: item[1]["name"]):
-        row = [emp["name"], emp["username"], emp["department"], ", ".join(emp["branches"])]
+        row = [emp["name"], emp["username"], emp["department"], emp["position"], ", ".join(emp["branches"])]
 
         worked_days = []  # rounded hours of every day the employee worked
         check_ins = []    # first check-in of every day the employee worked

@@ -12,6 +12,8 @@ from services import excel
 router = Router()
 router.message.filter(F.chat.type == "private")
 
+OWNER_SELF_REMOVAL = "O'zingizni ishdan chiqara olmaysiz: keyin xodim sifatida qaytib kira olmaysiz."
+
 @router.message(Command("help"))
 async def send_help_message(message: types.Message):
     """
@@ -27,10 +29,13 @@ async def send_help_message(message: types.Message):
         "📊 <b>/tabel</b>\n"
         "└ Joriy oy uchun barcha xodimlarning davomat tabelini Excel formatida generatsiya qiladi va yuboradi.\n\n"
         
-        "🏢 <b>/bolim_ozgartir</b>\n"
-        "└ O'zingizning bo'limingizni tozalaydi.\n"
-        "└ <code>/bolim_ozgartir 123456789</code> — ko'rsatilgan ID'ga ega xodimning bo'limini tozalaydi.\n"
-        "<i>(Bo'lim tozalangach, xodim /start bosganda bo'lim tanlash menyusi qayta chiqadi)</i>\n\n"
+        "🏢 <b>«Bo'limni o'zgartirish» tugmasi</b>\n"
+        "└ Xodimni tanlang → yangi bo'lim → lavozim: xodim boshqa bo'lim/lavozimga o'tkaziladi. "
+        "⚠️ belgisi — lavozimi hali belgilanmagan xodim.\n"
+        "└ «🔄 Xodimning o'zi qayta tanlasin» — bo'lim va lavozim tozalanadi, xodim /start bosganda "
+        "o'zi tanlaydi.\n"
+        "└ <code>/bolim_ozgartir 123456789</code> — ko'rsatilgan ID'ga ega xodimning bo'limini tozalaydi "
+        "(<code>/bolim_ozgartir</code> — o'zingiznikini).\n\n"
         
         "👥 <b>/hodimlar</b>\n"
         "└ Hozirda faol bo'lgan barcha xodimlar ro'yxatini va ularning bo'limlarini chiqaradi.\n"
@@ -52,9 +57,14 @@ async def send_help_message(message: types.Message):
         "└ Qayta bajarilsa, eski qiymatlar yangisi bilan almashtiriladi.\n\n"
 
         "🗂 <b>/filiallar</b>\n"
-        "└ Bo'lim va filiallarni boshqarish: yangi filial yoki bo'lim qo'shish, nomini, joylashuvini "
-        "(Telegram lokatsiyasi, Google/Yandex havolasi yoki koordinata), guruhini o'zgartirish, "
+        "└ Bo'lim, Savdo filiallari va lavozimlarni boshqarish: yangi filial yoki bo'lim qo'shish, nomini, "
+        "joylashuvini (Telegram lokatsiyasi, Google/Yandex havolasi yoki koordinata), guruhini o'zgartirish, "
         "bo'limlarga biriktirish, faolsizlantirish.\n"
+        "└ 🏭 Zavod: filiali yo'q bo'limlar (Ishlab chiqarish, Rahbariyat) ish joyi — ularning xodimlariga "
+        "filial so'ralmaydi. Joylashuvi va guruhini shu yerda o'zgartirasiz.\n"
+        "└ 💼 Lavozimlar: har bir bo'lim uchun lavozimlar ro'yxati (bir nechtasini bir xabarda, "
+        "har birini yangi qatordan yozib qo'shish mumkin). Xodim va nomzod bo'limdan keyin lavozim "
+        "tanlaydi; lavozimi yo'q bo'limda bu savol berilmaydi.\n"
         "└ Guruh ro'yxatda bo'lishi uchun botni o'sha guruhga qo'shing — u avtomatik eslab qoladi.\n\n"
 
         "📋 <b>/menu</b>\n"
@@ -122,7 +132,9 @@ async def list_employees(message: types.Message):
     if message.from_user.id != OWNER_ID:
         return
 
-    employees = await db.get_active_employees()
+    # The owner is not listed: removing yourself cannot be undone from the bot
+    # (an owner's /start always opens the admin menu, never the application form)
+    employees = [row for row in await db.get_active_employees() if row[0] != OWNER_ID]
 
     if not employees:
         await message.answer("Hozircha faol xodim yo'q.")
@@ -154,6 +166,10 @@ async def confirm_deactivate(callback_query: types.CallbackQuery):
         target_id = int(callback_query.data[len("emp_"):])
     except ValueError:
         await callback_query.answer("Noto'g'ri ma'lumot.", show_alert=True)
+        return
+
+    if target_id == OWNER_ID:
+        await callback_query.answer(OWNER_SELF_REMOVAL, show_alert=True)
         return
 
     row = await db.get_employee_short(target_id)
@@ -203,6 +219,10 @@ async def do_deactivate(callback_query: types.CallbackQuery):
         await callback_query.answer("Noto'g'ri ma'lumot.", show_alert=True)
         return
 
+    if target_id == OWNER_ID:
+        await callback_query.answer(OWNER_SELF_REMOVAL, show_alert=True)
+        return
+
     row = await db.get_employee_short(target_id)
     if row is None:
         await callback_query.answer("Xodim topilmadi.", show_alert=True)
@@ -216,4 +236,4 @@ async def do_deactivate(callback_query: types.CallbackQuery):
         "Qayta ishga olish uchun u /start bosib ariza yuborishi kerak. Davomat tarixi saqlanib qoldi.",
         parse_mode="HTML",
     )
-    await callback_query.answer("Bajarildi")
+    await callback_query.answer("Bajarildi")

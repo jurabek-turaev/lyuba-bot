@@ -181,7 +181,7 @@ class Step:
     input: str = "text"      # text | choice | contact | photo | file | preview
     options: Callable | None = None  # data -> [(code, label)] (may be async)
     parse: Callable | None = None    # typed text -> value (raises InputError)
-    apply: Callable | None = None    # (data, value) -> next step key or None
+    apply: Callable | None = None    # (data, value) -> next step key or None (may be async)
     skip: bool = False
     skip_to: str | None = None  # where "skip" leads (default: the next step)
     counts: bool = True         # numbered in the progress
@@ -222,8 +222,28 @@ async def _department_options(data):
     return [(str(dept_id), name) for dept_id, name, *_ in await db.list_departments(active_only=True)]
 
 
+async def _position_options(data):
+    if data.get("department_id") is None:
+        return []
+    return [(str(pos_id), name) for pos_id, name, _ in await db.list_positions(data["department_id"])]
+
+
+async def _apply_department(data, value):
+    """
+    A department without positions works as before positions existed: the
+    department's name stands for the position and the position question is skipped.
+    """
+    data["department_id"], data["department"] = value
+    data.pop("position_id", None)
+    data["position"] = None
+    if not await db.list_positions(data["department_id"]):
+        data["position"] = data["department"]
+        return following(data, "position")
+    return None
+
+
 def _apply_position(data, value):
-    data["department_id"], data["position"] = value
+    data["position_id"], data["position"] = value
 
 
 def _apply_experience(data, value):
@@ -283,8 +303,11 @@ STEPS_LIST = [
     Step("photo", _p("📷 Rezyume uchun rasmingizni yuboring (3×4, yuzingiz aniq ko'rinsin)."),
          input="photo", skip=True, section="personal"),
 
-    Step("position", _p("💼 Qaysi lavozimga ariza topshiryapsiz?"), input="choice",
-         options=_department_options, apply=_apply_position, section="position"),
+    Step("department", _p("🏢 Qaysi bo'limga ariza topshiryapsiz?"), input="choice",
+         options=_department_options, apply=_apply_department, section="position"),
+    Step("position", lambda data: f"🏢 Bo'lim: <b>{escape(data.get('department') or '—')}</b>\n\n"
+                                  "💼 Qaysi lavozimga ariza topshiryapsiz?",
+         input="choice", options=_position_options, apply=_apply_position, counts=False, section="position"),
     Step("expected_salary", _p(
         "💰 Qancha oylik maosh kutyapsiz? So'mda yozing.\nMasalan: <i>5 000 000</i>\n\n"
         "<i>Bu faqat adminga ko'rinadi, rezyumega yozilmaydi.</i>"),
@@ -355,13 +378,14 @@ STEPS = {step.key: step for step in STEPS_LIST}
 COMMON_FLOW = ["consent", "choose"]
 FORM_FLOW = [
     "full_name", "birth_date", "gender", "phone", "city", "marital_status", "photo",
-    "position", "expected_salary", "start_availability",
+    "department", "position", "expected_salary", "start_availability",
     "education_level", "edu_institution", "edu_specialty", "edu_year", "edu_more",
     "has_experience", "job_company", "job_position", "job_start", "job_end", "job_more",
     "lang_name", "lang_level", "lang_more", "computer_skills", "driver_license", "about",
     "preview",
 ]
-UPLOAD_FLOW = ["up_file", "full_name", "phone", "position", "expected_salary", "start_availability", "preview"]
+UPLOAD_FLOW = ["up_file", "full_name", "phone", "department", "position", "expected_salary", "start_availability",
+               "preview"]
 
 SECTIONS = {
     db.KIND_FORM: [("personal", "👤 Shaxsiy ma'lumotlar"), ("position", "💼 Lavozim va maosh"),
@@ -408,6 +432,10 @@ class Draft:
         if row is None or row[1] is None:
             return None
         _kind, step, data, _ = row
+        if step == "position" and data.get("department_id") is None:
+            # A form saved before positions existed, waiting at the old
+            # "position" (= department) question: it asks the department now
+            step = "department"
         return cls(user_id, step, data)
 
     async def save(self):
@@ -512,8 +540,10 @@ async def show_step(bot: Bot, draft: Draft, notice: str | None = None) -> None:
 
     rows = []
     options = await _options(step, draft.data)
-    if step.key == "position" and not options:
+    if step.key == "department" and not options:
         text += "\n\n⚠️ Hozircha bo'sh lavozimlar ro'yxati kiritilmagan. Keyinroq /start bosing."
+    elif step.key == "position" and not options:
+        text += "\n\n⚠️ Bu bo'limda hozir bo'sh lavozim yo'q. Orqaga qaytib boshqa bo'limni tanlang."
     per_row = 1 if any(len(label) > 18 for _, label in options) else 2
     for i in range(0, len(options), per_row):
         rows.append([_button(label, step.key, code) for code, label in options[i: i + per_row]])
@@ -562,7 +592,10 @@ def _preview_keyboard() -> InlineKeyboardMarkup:
 
 
 def _private_lines(data: dict) -> str:
-    return (f"💼 Lavozim: <b>{escape(data.get('position') or '—')}</b>\n"
+    department = data.get("department")
+    line = (f"🏢 Bo'lim: <b>{escape(department)}</b>\n"
+            if department and department != data.get("position") else "")
+    return (line + f"💼 Lavozim: <b>{escape(data.get('position') or '—')}</b>\n"
             f"💰 Kutilayotgan maosh: <b>{hr_format.money(data.get('expected_salary'))}</b>\n"
             f"🗓 Ishga chiqish: <b>{escape(data.get('start_availability') or '—')}</b>")
 
@@ -652,7 +685,8 @@ async def _send_application(bot: Bot, callback: types.CallbackQuery, draft: Draf
         user.id, user.username,
         kind=db.KIND_UPLOAD if upload else db.KIND_FORM,
         full_name=data["full_name"], phone=data["phone"],
-        department_id=data["department_id"], expected_salary=data["expected_salary"],
+        department_id=data["department_id"], position_id=data.get("position_id"),
+        expected_salary=data["expected_salary"],
         start_availability=data.get("start_availability"),
         resume_data=None if upload else _answers(data),
         resume_file_id=data.get("resume_file_id") if upload else data.get("_pdf_file_id"),
@@ -681,6 +715,8 @@ async def _send_application(bot: Bot, callback: types.CallbackQuery, draft: Draf
 # ===========================
 async def _advance(bot: Bot, draft: Draft, step: Step, value, notice: str | None = None) -> None:
     route = step.apply(draft.data, value) if step.apply else None
+    if inspect.isawaitable(route):
+        route = await route
     draft.go(route or following(draft.data, step.key))
     await draft.save()
     await show_step(bot, draft, notice)
@@ -851,7 +887,7 @@ async def on_button(callback: types.CallbackQuery, bot: Bot):
         data["_kind"] = db.KIND_UPLOAD if code == "upload" else db.KIND_FORM
         draft.go(following(data, "choose"))
     else:
-        if key == "position":
+        if key in ("department", "position"):
             value = (int(code), label)
         elif step.loop or key == "has_experience":
             value = code

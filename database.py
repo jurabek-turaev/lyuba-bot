@@ -171,14 +171,51 @@ async def set_employee_department(user_id: int, department_id: int):
         await db.commit()
 
 
-async def reset_employee_department(user_id: int):
+async def set_employee_job(user_id: int, department_id: int, position_id: int | None):
     """
-    Xodimning bo'limini tozalaydi — shundan keyin u /start bosganda
-    bo'lim tanlash savoli yana beriladi. Faqat OWNER_ID chaqira oladi.
+    Department and position together (the employee's own choice at /start, or the
+    admin's transfer). A chosen location of another department does not survive
+    the change; the same department keeps it.
     """
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "UPDATE employees SET department = NULL, department_id = NULL WHERE user_id = ?",
+            """INSERT INTO employees (user_id, department, department_id, position_id)
+               VALUES (?, (SELECT name FROM departments WHERE id = ?), ?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   location_id = CASE
+                       WHEN employees.department_id IS excluded.department_id
+                       THEN employees.location_id ELSE NULL END,
+                   department = excluded.department,
+                   department_id = excluded.department_id,
+                   position_id = excluded.position_id""",
+            (user_id, department_id, department_id, position_id),
+        )
+        await db.commit()
+
+
+async def get_employee_job(user_id: int):
+    """(full_name, department_id, department, position_id, position, is_active) or None."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT e.full_name, e.department_id, d.name, e.position_id, p.name, e.is_active
+               FROM employees e
+               LEFT JOIN departments d ON d.id = e.department_id
+               LEFT JOIN positions p ON p.id = e.position_id
+               WHERE e.user_id = ?""",
+            (user_id,),
+        )
+        return await cursor.fetchone()
+
+
+async def reset_employee_department(user_id: int):
+    """
+    Xodimning bo'limini (va lavozimini) tozalaydi — shundan keyin u /start bosganda
+    bo'lim va lavozim tanlash savoli yana beriladi. Faqat OWNER_ID chaqira oladi.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """UPDATE employees SET department = NULL, department_id = NULL, position_id = NULL
+               WHERE user_id = ?""",
             (user_id,),
         )
         await db.commit()
@@ -351,21 +388,24 @@ async def get_month_attendance(year: int, month: int):
     Branch column: rows written before departments/locations moved to the database
     stored the factory DEPARTMENT name as the branch ("Haydovchi"). The migration
     linked them to their location ("Zavod"); the tabel shows that location, so the
-    same work place is not listed twice ("Haydovchi, Zavod").
+    same work place is not listed twice ("Haydovchi, Zavod"). The old factory
+    department names count too, also after a rename ("I.T.R xodimlari" -> "Rahbariyat").
     """
     month_prefix = f"{year:04d}-{month:02d}"
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            """SELECT a.user_id, a.full_name, e.username, e.department,
-                      CASE WHEN l.name IS NOT NULL AND a.branch IN (SELECT name FROM departments)
+            """SELECT a.user_id, a.full_name, e.username, e.department, p.name,
+                      CASE WHEN l.name IS NOT NULL AND (a.branch IN (SELECT name FROM departments)
+                                                         OR a.branch IN (?, ?, ?))
                            THEN l.name ELSE a.branch END,
                       a.work_date, a.work_hours, a.check_in_time
                FROM attendance a
                LEFT JOIN employees e ON e.user_id = a.user_id
+               LEFT JOIN positions p ON p.id = e.position_id
                LEFT JOIN locations l ON l.id = a.location_id
                WHERE a.work_date LIKE ?
                ORDER BY a.full_name, a.work_date""",
-            (f"{month_prefix}%",),
+            (*LEGACY_FACTORY_DEPARTMENTS, f"{month_prefix}%"),
         )
         return await cursor.fetchall()
 
@@ -396,6 +436,20 @@ async def get_active_employees():
                FROM employees
                WHERE is_active = 1
                ORDER BY full_name"""
+        )
+        return await cursor.fetchall()
+
+
+async def get_active_employees_with_job():
+    """Active employees with their department and position names: (user_id, full_name, department, position)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT e.user_id, e.full_name, COALESCE(d.name, e.department), p.name
+               FROM employees e
+               LEFT JOIN departments d ON d.id = e.department_id
+               LEFT JOIN positions p ON p.id = e.position_id
+               WHERE e.is_active = 1
+               ORDER BY e.full_name"""
         )
         return await cursor.fetchall()
 
@@ -536,8 +590,10 @@ KIND_UPLOAD = "upload"  # the candidate's own resume file
 # Columns added to the old applications table (all nullable: old rows stay valid)
 _HR_COLUMNS = [
     ("kind", "TEXT"),
-    ("department_id", "INTEGER"),        # chosen position = department
-    ("position", "TEXT"),                # its name at the moment of applying (history)
+    ("department_id", "INTEGER"),        # chosen department
+    ("position", "TEXT"),                # the position's name at the moment of applying (history);
+                                         # before positions existed: the department's name
+    ("position_id", "INTEGER"),          # chosen position (NULL: department without positions / old rows)
     ("expected_salary", "INTEGER"),      # so'm per month
     ("start_availability", "TEXT"),
     ("resume_data", "TEXT"),             # JSON of the form answers (kind "form")
@@ -559,7 +615,9 @@ _HR_COLUMNS = [
 
 _APPLICATION_SELECT = """
     SELECT id, user_id, full_name, phone, username, status, created_at, decided_at,
-           COALESCE(kind, 'legacy') AS kind, department_id, position, expected_salary,
+           COALESCE(kind, 'legacy') AS kind, department_id, position, position_id,
+           (SELECT name FROM departments WHERE id = applications.department_id) AS department,
+           expected_salary,
            start_availability, resume_data, resume_file_id, resume_file_name, resume_file_type,
            card_message_id, interview_at, interview_place, interview_location_id, interview_note,
            invited_at, reminder_sent_at, result_asked_at, reschedule_request, reschedule_requested_at,
@@ -679,6 +737,7 @@ async def submit_application(
     phone: str,
     department_id: int,
     expected_salary: int,
+    position_id: int | None = None,
     start_availability: str | None = None,
     resume_data: dict | None = None,
     resume_file_id: str | None = None,
@@ -689,20 +748,23 @@ async def submit_application(
     Turn a finished form / upload into a pending application and delete the draft,
     in ONE transaction. Returns the new id, or None when the user already has an
     active application (the draft is kept then).
+    The position text is the position's name, or the department's name when the
+    department has no positions (as before positions existed).
     """
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             f"""INSERT INTO applications (
                     user_id, full_name, phone, username, status, created_at, kind,
-                    department_id, position, expected_salary, start_availability,
+                    department_id, position_id, position, expected_salary, start_availability,
                     resume_data, resume_file_id, resume_file_name, resume_file_type)
                 SELECT ?, ?, ?, ?, 'pending', ?, ?,
-                       ?, (SELECT name FROM departments WHERE id = ?), ?, ?,
+                       ?, ?, COALESCE((SELECT name FROM positions WHERE id = ?),
+                                      (SELECT name FROM departments WHERE id = ?)), ?, ?,
                        ?, ?, ?, ?
                 WHERE {_NO_ACTIVE_APPLICATION}""",
             (
                 user_id, full_name, phone, username, _now_str(), kind,
-                department_id, department_id, expected_salary, start_availability,
+                department_id, position_id, position_id, department_id, expected_salary, start_availability,
                 json.dumps(resume_data, ensure_ascii=False) if resume_data is not None else None,
                 resume_file_id, resume_file_name, resume_file_type,
                 user_id,
@@ -918,7 +980,7 @@ async def approve_application(app_id: int):
     Hire (approve) an active application and add (or re-activate) the employee in
     ONE transaction. Returns (user_id, full_name), or None when it was not active.
 
-    The department is the position the candidate applied for. Old name+phone
+    The department and the position are the ones the candidate applied for. Old name+phone
     applications have no position: a returning employee keeps the department,
     a row that never had a name (unfinished registration) loses its leftover
     department, so the person chooses it again after the approval.
@@ -933,12 +995,13 @@ async def approve_application(app_id: int):
             return None
 
         cursor = await db.execute(
-            """SELECT a.user_id, a.full_name, a.username, d.id, d.name
+            """SELECT a.user_id, a.full_name, a.username, d.id, d.name,
+                      (SELECT p.id FROM positions p WHERE p.id = a.position_id AND p.department_id = d.id)
                FROM applications a LEFT JOIN departments d ON d.id = a.department_id
                WHERE a.id = ?""",
             (app_id,),
         )
-        user_id, full_name, username, department_id, department = await cursor.fetchone()
+        user_id, full_name, username, department_id, department, position_id = await cursor.fetchone()
 
         if department_id is None:
             await db.execute(
@@ -958,18 +1021,20 @@ async def approve_application(app_id: int):
         else:
             # A chosen location of another department must not survive the change
             await db.execute(
-                """INSERT INTO employees (user_id, full_name, username, department, department_id, is_active)
-                   VALUES (?, ?, ?, ?, ?, 1)
+                """INSERT INTO employees (user_id, full_name, username, department, department_id,
+                                         position_id, is_active)
+                   VALUES (?, ?, ?, ?, ?, ?, 1)
                    ON CONFLICT(user_id) DO UPDATE SET
                        location_id = CASE
                            WHEN employees.department_id IS excluded.department_id
                            THEN employees.location_id ELSE NULL END,
                        department = excluded.department,
                        department_id = excluded.department_id,
+                       position_id = excluded.position_id,
                        full_name = excluded.full_name,
                        username = excluded.username,
                        is_active = 1""",
-                (user_id, full_name, username, department, department_id),
+                (user_id, full_name, username, department, department_id, position_id),
             )
         await db.commit()
         return user_id, full_name
@@ -1042,7 +1107,7 @@ async def purge_expired_applications(application_days: int, draft_days: int):
 # (moved from config.py into the database, managed by the admin)
 # ===========================
 # Shared location created on the first migration for the factory departments
-# (Ishlab chiqarish, Haydovchi, I.T.R xodimlari)
+# (Ishlab chiqarish, Haydovchi, I.T.R xodimlari — now "Rahbariyat")
 FACTORY_LOCATION_NAME = "Zavod"
 
 
@@ -1096,6 +1161,18 @@ async def _migrate_catalog():
                 PRIMARY KEY (department_id, location_id)
             )
         """)
+        # Real job titles inside a department (Savdo: sotuvchi, ofitsiant, ...), entered by
+        # the admin. A department without positions works as before: no position question.
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                department_id INTEGER NOT NULL REFERENCES departments(id),
+                name TEXT NOT NULL COLLATE NOCASE,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                UNIQUE (department_id, name)
+            )
+        """)
         # Groups the bot is a member of. Filled automatically when the bot is added
         # to a group, so the admin picks a group from a list instead of typing its id.
         # ("groups" is an SQL keyword, hence tg_groups.)
@@ -1113,13 +1190,23 @@ async def _migrate_catalog():
         # Last location the employee chose (needed for departments with several locations)
         if not await _column_exists(db, "employees", "location_id"):
             await db.execute("ALTER TABLE employees ADD COLUMN location_id INTEGER")
+        # The employee's position (NULL: not chosen yet, or the department has no positions)
+        if not await _column_exists(db, "employees", "position_id"):
+            await db.execute("ALTER TABLE employees ADD COLUMN position_id INTEGER")
         # attendance.branch stays as the historical name; location_id is the stable link
         if not await _column_exists(db, "attendance", "location_id"):
             await db.execute("ALTER TABLE attendance ADD COLUMN location_id INTEGER")
 
+        # "branch" = a Savdo shop the employee chooses; "base" = Zavod, the one main work
+        # place of every department without shops (Ishlab chiqarish, Rahbariyat)
+        if not await _column_exists(db, "locations", "kind"):
+            await db.execute("ALTER TABLE locations ADD COLUMN kind TEXT NOT NULL DEFAULT 'branch'")
+
         if first_run:
             await _seed_catalog(db)
         await _link_rows_by_name(db)
+        await _rename_itr_department(db)
+        await _make_factory_the_base(db)
 
         await db.commit()
 
@@ -1197,6 +1284,50 @@ async def _seed_catalog(db):
         logger.info("[catalog] empty catalog created; the admin fills it via /filiallar")
 
 
+# "I.T.R xodimlari" is called "Rahbariyat" now
+ITR_OLD_NAME = "I.T.R xodimlari"
+ITR_NEW_NAME = "Rahbariyat"
+
+
+async def _rename_itr_department(db):
+    """
+    One-time rename "I.T.R xodimlari" -> "Rahbariyat" (the employees' department text
+    follows it, like an admin rename). Safe to repeat: nothing happens once the old
+    name is gone, or when the admin already made a "Rahbariyat" department.
+    attendance.branch keeps the old name as history.
+    """
+    cursor = await db.execute("SELECT id FROM departments WHERE name = ?", (ITR_OLD_NAME,))
+    row = await cursor.fetchone()
+    if row is None:
+        return
+    cursor = await db.execute("SELECT 1 FROM departments WHERE name = ?", (ITR_NEW_NAME,))
+    if await cursor.fetchone():
+        logger.warning("[catalog] both %r and %r exist; nothing renamed", ITR_OLD_NAME, ITR_NEW_NAME)
+        return
+    await db.execute("UPDATE departments SET name = ? WHERE id = ?", (ITR_NEW_NAME, row[0]))
+    await db.execute("UPDATE employees SET department = ? WHERE department_id = ?", (ITR_NEW_NAME, row[0]))
+    logger.info("[catalog] department %r renamed to %r", ITR_OLD_NAME, ITR_NEW_NAME)
+
+
+async def _make_factory_the_base(db):
+    """
+    "Zavod" stops being a branch: it becomes the base work place, used by every
+    department that has no shops. Its links to departments are not needed any more
+    (a department without shops goes to the base by itself), so they are removed.
+    Safe to repeat: nothing changes once a base exists and has no links.
+    """
+    cursor = await db.execute("SELECT id FROM locations WHERE kind = 'base'")
+    if await cursor.fetchone() is None:
+        cursor = await db.execute(
+            "UPDATE locations SET kind = 'base' WHERE name = ?", (FACTORY_LOCATION_NAME,)
+        )
+        if cursor.rowcount:
+            logger.info("[catalog] %r is the base work place now", FACTORY_LOCATION_NAME)
+    await db.execute(
+        "DELETE FROM department_locations WHERE location_id IN (SELECT id FROM locations WHERE kind = 'base')"
+    )
+
+
 async def _link_rows_by_name(db):
     """
     Give rows that have no id yet the id of the department / location with the same name.
@@ -1221,7 +1352,9 @@ async def _link_rows_by_name(db):
             (SELECT MIN(dl.location_id)
                FROM departments d JOIN department_locations dl ON dl.department_id = d.id
               WHERE d.name = attendance.branch
-              GROUP BY d.id HAVING COUNT(*) = 1)
+              GROUP BY d.id HAVING COUNT(*) = 1),
+            (SELECT l.id FROM locations l
+              WHERE l.kind = 'base' AND attendance.branch IN (SELECT name FROM departments))
         )
         WHERE location_id IS NULL
     """)
@@ -1262,14 +1395,28 @@ async def get_department_by_name(name: str):
         return await cursor.fetchone()
 
 
-async def list_locations(active_only: bool = True):
-    """(id, name, lat, lon, group_id, is_active) of the locations, in creation order."""
-    query = "SELECT id, name, lat, lon, group_id, is_active FROM locations"
+async def list_locations(active_only: bool = True, branches_only: bool = False):
+    """
+    (id, name, lat, lon, group_id, is_active) of the locations, in creation order.
+    branches_only: the Savdo shops, without the base work place (Zavod).
+    """
+    query = "SELECT id, name, lat, lon, group_id, is_active FROM locations WHERE 1 = 1"
     if active_only:
-        query += " WHERE is_active = 1"
+        query += " AND is_active = 1"
+    if branches_only:
+        query += " AND kind = 'branch'"
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(query + " ORDER BY id")
         return await cursor.fetchall()
+
+
+async def get_base_location():
+    """The base work place (Zavod): (id, name, lat, lon, group_id, is_active), or None when not entered yet."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, name, lat, lon, group_id, is_active FROM locations WHERE kind = 'base' ORDER BY id LIMIT 1"
+        )
+        return await cursor.fetchone()
 
 
 async def get_location(location_id: int):
@@ -1283,11 +1430,15 @@ async def get_location(location_id: int):
 
 
 async def get_department_locations(department_id: int, active_only: bool = True):
-    """Locations of one department: (id, name, lat, lon, group_id, is_active), in creation order."""
+    """
+    Branches (shops) of one department: (id, name, lat, lon, group_id, is_active), in
+    creation order. The base work place is never linked: a department without
+    branches works there.
+    """
     query = """SELECT l.id, l.name, l.lat, l.lon, l.group_id, l.is_active
                FROM locations l
                JOIN department_locations dl ON dl.location_id = l.id
-               WHERE dl.department_id = ?"""
+               WHERE dl.department_id = ? AND l.kind = 'branch'"""
     if active_only:
         query += " AND l.is_active = 1"
     async with aiosqlite.connect(DB_PATH) as db:
@@ -1311,13 +1462,19 @@ async def catalog_name_taken(table: str, name: str, exclude_id: int | None = Non
     return any(row_name.casefold() == wanted and row_id != exclude_id for row_id, row_name in rows)
 
 
-async def create_location(name: str, lat: float, lon: float, group_id: int | None, department_ids: list) -> int:
-    """Create an active location linked to the given departments; returns its id."""
+async def create_location(name: str, lat: float, lon: float, group_id: int | None, department_ids: list,
+                          *, base: bool = False) -> int:
+    """
+    Create an active location linked to the given departments; returns its id.
+    base=True: the base work place (Zavod); it is never linked to departments.
+    """
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "INSERT INTO locations (name, lat, lon, group_id, created_at) VALUES (?, ?, ?, ?, ?)",
-            (name, lat, lon, group_id, _now_str()),
+            "INSERT INTO locations (name, lat, lon, group_id, created_at, kind) VALUES (?, ?, ?, ?, ?, ?)",
+            (name, lat, lon, group_id, _now_str(), "base" if base else "branch"),
         )
+        if base:
+            department_ids = []
         location_id = cursor.lastrowid
         await db.executemany(
             "INSERT OR IGNORE INTO department_locations (department_id, location_id) VALUES (?, ?)",
@@ -1474,9 +1631,115 @@ async def delete_department(department_id: int) -> bool:
         if (await cursor.fetchone())[0]:
             return False
         await db.execute("DELETE FROM department_locations WHERE department_id = ?", (department_id,))
+        await db.execute("DELETE FROM positions WHERE department_id = ?", (department_id,))
         await db.execute("DELETE FROM departments WHERE id = ?", (department_id,))
         await db.commit()
         return True
+
+
+# ===========================
+# Positions (job titles inside a department)
+# ===========================
+async def list_positions(department_id: int, active_only: bool = True):
+    """(id, name, is_active) of a department's positions, in creation order."""
+    query = "SELECT id, name, is_active FROM positions WHERE department_id = ?"
+    if active_only:
+        query += " AND is_active = 1"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(query + " ORDER BY id", (department_id,))
+        return await cursor.fetchall()
+
+
+async def get_position(position_id: int):
+    """(id, department_id, name, is_active) or None."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, department_id, name, is_active FROM positions WHERE id = ?", (position_id,)
+        )
+        return await cursor.fetchone()
+
+
+async def position_name_taken(department_id: int, name: str, exclude_id: int | None = None) -> bool:
+    """True when the department already has a position with this name, ignoring case (Cyrillic too)."""
+    wanted = name.casefold()
+    return any(
+        row_name.casefold() == wanted and row_id != exclude_id
+        for row_id, row_name, _ in await list_positions(department_id, active_only=False)
+    )
+
+
+async def create_positions(department_id: int, names: list) -> list:
+    """Create active positions in a department; returns their ids."""
+    ids = []
+    async with aiosqlite.connect(DB_PATH) as db:
+        for name in names:
+            cursor = await db.execute(
+                "INSERT INTO positions (department_id, name, created_at) VALUES (?, ?, ?)",
+                (department_id, name, _now_str()),
+            )
+            ids.append(cursor.lastrowid)
+        await db.commit()
+    return ids
+
+
+async def rename_position(position_id: int, name: str):
+    """New name. Applications keep the name they were sent with (history)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE positions SET name = ? WHERE id = ?", (name, position_id))
+        await db.commit()
+
+
+async def set_position_active(position_id: int, active: bool):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE positions SET is_active = ? WHERE id = ?", (1 if active else 0, position_id))
+        await db.commit()
+
+
+async def position_usage(position_id: int):
+    """(active employees, all employees, applications) that have this position."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT
+                   (SELECT COUNT(*) FROM employees WHERE position_id = ? AND is_active = 1),
+                   (SELECT COUNT(*) FROM employees WHERE position_id = ?),
+                   (SELECT COUNT(*) FROM applications WHERE position_id = ?)""",
+            (position_id, position_id, position_id),
+        )
+        return await cursor.fetchone()
+
+
+async def delete_position(position_id: int) -> bool:
+    """
+    Delete a position no employee and no application ever had. Returns False, and
+    deletes nothing, when it is in use (then it can only be deactivated).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT EXISTS (SELECT 1 FROM employees WHERE position_id = ?)
+                   OR EXISTS (SELECT 1 FROM applications WHERE position_id = ?)""",
+            (position_id, position_id),
+        )
+        if (await cursor.fetchone())[0]:
+            return False
+        await db.execute("DELETE FROM positions WHERE id = ?", (position_id,))
+        await db.commit()
+        return True
+
+
+async def employees_without_position():
+    """
+    Active employees whose department has active positions but who have none
+    chosen (they worked before positions existed): (user_id, full_name, department).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT e.user_id, e.full_name, d.name
+               FROM employees e JOIN departments d ON d.id = e.department_id
+               WHERE e.is_active = 1 AND e.position_id IS NULL
+                 AND EXISTS (SELECT 1 FROM positions p WHERE p.department_id = d.id AND p.is_active = 1)
+               ORDER BY d.id, e.full_name"""
+        )
+        return await cursor.fetchall()
 
 
 async def get_attendance_location_id(attendance_id: int):

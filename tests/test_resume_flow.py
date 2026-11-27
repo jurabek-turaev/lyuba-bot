@@ -75,7 +75,7 @@ class ResumeFlowTests(FlowTestCase):
         await self.send(USER, text="Qarshi shahri")
         await self.press(USER, "rf:marital_status:0")
         await self.send(USER, photo=[{"file_id": "face", "file_unique_id": "f", "width": 300, "height": 400}])
-        await self.press(USER, f"rf:position:{await self.department_id('Savdo')}")
+        await self.press(USER, f"rf:department:{await self.department_id('Savdo')}")
         await self.send(USER, text="5 000 000")
         await self.press(USER, "rf:start_availability:0")
         await self.press(USER, "rf:education_level:0")
@@ -268,7 +268,7 @@ class ResumeFlowTests(FlowTestCase):
         # unchanged answers: the same PDF is shown again without rendering
         await self.press(USER, "rf:preview:edit")
         await self.press(USER, "rf:preview:e_position")
-        await self.press(USER, "rf:position:<")  # back from the first question of the section
+        await self.press(USER, "rf:department:<")  # back from the first question of the section
         self.assertEqual(len(self.rendered), 2)
 
     async def test_renderer_failure_still_lets_the_candidate_apply(self):
@@ -288,7 +288,7 @@ class ResumeFlowTests(FlowTestCase):
         await self.send(USER, photo=[{"file_id": "scan", "file_unique_id": "s", "width": 1, "height": 1}])
         await self.send(USER, text="Valiyev Ali")
         await self.send(USER, contact={"phone_number": "998901234567", "first_name": "A", "user_id": USER})
-        await self.press(USER, f"rf:position:{await self.department_id('Savdo')}")
+        await self.press(USER, f"rf:department:{await self.department_id('Savdo')}")
         await self.send(USER, text="3 mln")
         sent = await self.press(USER, "rf:start_availability:3")
         self.assertSent(sent, "Arizangizni tekshiring", "3 000 000 so'm", "1 oydan keyin")

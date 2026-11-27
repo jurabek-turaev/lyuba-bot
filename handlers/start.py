@@ -1,4 +1,7 @@
+from html import escape
+
 from aiogram import Router, types, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
@@ -21,6 +24,15 @@ def get_department_keyboard(departments: list):
     return builder.as_markup()
 
 
+def get_position_keyboard(positions: list):
+    builder = InlineKeyboardBuilder()
+    for position in positions:
+        builder.add(types.InlineKeyboardButton(text=position.name, callback_data=f"pos:{position.id}"))
+    builder.adjust(2 if all(len(p.name) <= 18 for p in positions) else 1)
+    builder.row(types.InlineKeyboardButton(text="◀️ Orqaga", callback_data="deptlist"))
+    return builder.as_markup()
+
+
 def get_location_keyboard(locations: list):
     builder = InlineKeyboardBuilder()
     for location in locations:
@@ -37,15 +49,15 @@ def _id_from(callback_data: str) -> int | None:
         return None
 
 
+DEPARTMENT_QUESTION = "Qaysi bo'limda ishlaysiz? (bu savol faqat birinchi marta beriladi)"
+
+
 async def _ask_department(message: types.Message):
     departments = await placement.list_departments()
     if not departments:
         await message.answer("⚠️ Hozircha bo'limlar sozlanmagan. Iltimos, admin bilan bog'laning.")
         return
-    await message.answer(
-        "Qaysi bo'limda ishlaysiz? (bu savol faqat birinchi marta beriladi)",
-        reply_markup=get_department_keyboard(departments),
-    )
+    await message.answer(DEPARTMENT_QUESTION, reply_markup=get_department_keyboard(departments))
 
 
 async def _offer_locations(message: types.Message, state: FSMContext, department, locations: list, prefix: str):
@@ -96,12 +108,77 @@ async def department_chosen(callback_query: types.CallbackQuery, state: FSMConte
         await callback_query.answer("Bu bo'lim endi mavjud emas. /start ni qayta bosing.", show_alert=True)
         return
 
-    await db.set_employee_department(user_id, department.id)
+    positions = await placement.department_positions(department.id)
+    if positions:
+        # Nothing is saved yet: the department is saved together with the position,
+        # so a person who stops here is asked the department again at /start
+        await _edit_or_answer(
+            callback_query.message,
+            f"🏢 Bo'lim: <b>{escape(department.name)}</b>\n\nLavozimingizni tanlang:",
+            get_position_keyboard(positions),
+        )
+        await callback_query.answer()
+        return
+
+    await db.set_employee_job(user_id, department.id, None)
     locations = await placement.department_locations(department.id)
     await _offer_locations(
         callback_query.message, state, department, locations, f"✅ Bo'lim saqlandi: {department.name}\n\n"
     )
     await callback_query.answer()
+
+
+@router.callback_query(F.data == "deptlist")
+async def back_to_departments(callback_query: types.CallbackQuery):
+    current, _, _ = await placement.employee_placement(callback_query.from_user.id)
+    if current is not None:
+        await callback_query.answer(f"Bo'limingiz allaqachon tanlangan: {current.name}", show_alert=True)
+        return
+    departments = await placement.list_departments()
+    await _edit_or_answer(callback_query.message, DEPARTMENT_QUESTION, get_department_keyboard(departments))
+    await callback_query.answer()
+
+
+@router.callback_query(F.data.startswith("pos:"))
+async def position_chosen(callback_query: types.CallbackQuery, state: FSMContext):
+    user_id = callback_query.from_user.id
+
+    current, _, _ = await placement.employee_placement(user_id)
+    if current is not None:
+        await callback_query.answer(f"Bo'limingiz allaqachon tanlangan: {current.name}", show_alert=True)
+        return
+
+    position_id = _id_from(callback_query.data)
+    position = await placement.get_position(position_id) if position_id is not None else None
+    if position is None:
+        await callback_query.answer("Bu lavozim endi mavjud emas. /start ni qayta bosing.", show_alert=True)
+        return
+    department = await placement.get_department(position.department_id)
+
+    await db.set_employee_job(user_id, department.id, position.id)
+    await _drop_keyboard(callback_query.message)
+    locations = await placement.department_locations(department.id)
+    await _offer_locations(
+        callback_query.message, state, department, locations,
+        f"✅ Saqlandi: {department.name} · {position.name}\n\n",
+    )
+    await callback_query.answer()
+
+
+async def _edit_or_answer(message: types.Message, text: str, markup):
+    """Replace the question in place; a message that cannot be edited gets a new one below."""
+    try:
+        await message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    except TelegramBadRequest:
+        await message.answer(text, reply_markup=markup, parse_mode="HTML")
+
+
+async def _drop_keyboard(message: types.Message):
+    """An answered question loses its buttons, so an old tap cannot come back."""
+    try:
+        await message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
 
 
 @router.callback_query(F.data.startswith("loc:"))
@@ -128,4 +205,4 @@ async def location_chosen(callback_query: types.CallbackQuery, state: FSMContext
 # Keyboards sent before the switch to ids carried names ("dept_Savdo", "branch_Eski bozor")
 @router.callback_query(F.data.startswith("dept_") | F.data.startswith("branch_"))
 async def stale_name_button(callback_query: types.CallbackQuery):
-    await callback_query.answer(STALE_BUTTON_TEXT, show_alert=True)
+    await callback_query.answer(STALE_BUTTON_TEXT, show_alert=True)
