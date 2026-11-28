@@ -1,13 +1,14 @@
 import logging
 from datetime import datetime
 
-from aiogram import Router, types, F
+from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 import database as db
-from services import worktime, telegram_group
+from services import telegram_group, worktime
 from services.placement import Location
+
 from .states import AttendanceState, reset_keep_branch
 
 logger = logging.getLogger(__name__)
@@ -91,9 +92,10 @@ async def ask_location_for_check_out(message: types.Message, state: FSMContext):
 # Yakunlash funksiyalari — handlers/location.py dagi handle_location chaqiradi
 # (masofa allaqachon tekshirilgan va ruxsat etilgan chegarada)
 # ===========================
-async def _department_name(user_id: int) -> str | None:
-    employee = await db.get_employee_short(user_id)  # (full_name, department, is_active)
-    return employee[1] if employee else None
+async def _job_names(user_id: int) -> tuple[str | None, str | None]:
+    """(department, position) of the employee for the group message, None when not set."""
+    job = await db.get_employee_job(user_id)  # (full_name, dept_id, department, position_id, position, is_active)
+    return (job[2], job[4]) if job else (None, None)
 
 
 async def finalize_check_in(message: types.Message, state: FSMContext, distance: int, location: Location):
@@ -121,8 +123,9 @@ async def finalize_check_in(message: types.Message, state: FSMContext, distance:
     # xodimga tasdiq berish va FSM'ni tozalash BLOKLANMASLIGI kerak. Aks holda
     # xodim tasdiq olmay qayta video yuboradi va holatlar chalkashadi.
     try:
+        department, position = await _job_names(user_id)
         await telegram_group.send_check_in(message.bot, location.group_id, name, branch, distance, time_str,
-                                           await _department_name(user_id))
+                                           department, position)
     except Exception:
         logger.exception("Guruhga 'Keldi' xabarini yuborib bo'lmadi (branch=%s)", branch)
 
@@ -159,8 +162,9 @@ async def finalize_check_out(message: types.Message, state: FSMContext, distance
     # Guruhga xabar timeout'da yiqilsa ham, chiqish allaqachon bazaga yozilgan —
     # xodimga tasdiq berish va FSM'ni tozalash BLOKLANMASLIGI kerak.
     try:
+        department, position = await _job_names(message.from_user.id)
         await telegram_group.send_check_out(message.bot, location.group_id, name, branch, distance, time_str,
-                                            hours, await _department_name(message.from_user.id))
+                                            hours, department, position)
     except Exception:
         logger.exception("Guruhga 'Ketdi' xabarini yuborib bo'lmadi (branch=%s)", branch)
 

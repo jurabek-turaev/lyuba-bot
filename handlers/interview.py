@@ -25,10 +25,17 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
-from config import OWNER_ID
 import database as db
+from config import OWNER_ID
 from services import hr_format, hr_messages
-from .application import Unapproved, notify_admin, refresh_card, send_to_candidate, UNDELIVERED
+
+from .application import (
+    UNDELIVERED,
+    Unapproved,
+    notify_admin,
+    refresh_card,
+    send_to_candidate,
+)
 from .states import InterviewState, RescheduleState
 
 logger = logging.getLogger(__name__)

@@ -4,8 +4,8 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 
-from config import OWNER_ID
 import database as db
+from config import OWNER_ID
 
 logger = logging.getLogger(__name__)
 

@@ -5,8 +5,8 @@ copy per test), fake Telegram connection. No network, no real .env.
 Run:  python -m unittest discover -s tests -t . -v
 """
 import os
-import unittest
 import sqlite3
+import unittest
 from datetime import datetime, timedelta
 from unittest import mock
 
@@ -14,7 +14,12 @@ import config
 import database as db
 from services import auto_close, excel
 from tests.flow_harness import (
-    OWNER, SAVDO_GROUP, SHOP_POINTS, ZAVOD_GROUP, ZAVOD_POINT, FlowTestCase,
+    OWNER,
+    SAVDO_GROUP,
+    SHOP_POINTS,
+    ZAVOD_GROUP,
+    ZAVOD_POINT,
+    FlowTestCase,
 )
 
 FAR_AWAY = (41.311081, 69.240562)  # Tashkent, hundreds of km from every location

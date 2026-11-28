@@ -2,15 +2,21 @@ import asyncio
 import logging
 from collections import defaultdict
 
-from aiogram import Router, types, F
+from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
-from aiogram.types import ContentType, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import (
+    ContentType,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 
-from config import MAX_DISTANCE, DEVELOPER_ID
 import database as db
+from config import DEVELOPER_ID, MAX_DISTANCE
 from services import gps, placement, telegram_group
-from .states import AttendanceState, reset_keep_branch
+
 from .attendance import finalize_check_in, finalize_check_out
+from .states import AttendanceState, reset_keep_branch
 
 logger = logging.getLogger(__name__)
 

@@ -11,8 +11,8 @@ from unittest import mock
 
 import database as db
 from handlers import resume
-from services import excel
-from tests.flow_harness import OWNER, SHOP_POINTS, ZAVOD_GROUP, FlowTestCase
+from services import auto_close, excel
+from tests.flow_harness import OWNER, SHOP_POINTS, ZAVOD_GROUP, ZAVOD_POINT, FlowTestCase
 
 CANDIDATE = 6001
 
@@ -435,3 +435,33 @@ class OwnerSelfRemovalTests(PositionTestCase):
         # other employees are removed as before
         await self.press(OWNER, "empdel_7101")
         self.assertEqual(await self.query("SELECT is_active FROM employees WHERE user_id = 7101"), [(0,)])
+
+
+# =====================================================================
+# Group cards name the position
+# =====================================================================
+class GroupCardPositionTests(PositionTestCase):
+    async def test_check_in_out_and_auto_close_cards_show_the_position(self):
+        rahbariyat = await self.department_id("Rahbariyat")
+        await self.add_positions("Rahbariyat", "Menejer")
+        await self.make_employee(7301, "Rahbar Xodim", "Rahbariyat")
+        await db.set_employee_job(7301, rahbariyat, await self.position_id("Rahbariyat", "Menejer"))
+        await self.send(7301, text="/start")
+
+        sent = await self.check_in(7301, ZAVOD_POINT)
+        self.assertSent(self.sent_to(sent, ZAVOD_GROUP), "Bo'lim: Rahbariyat", "Lavozim: Menejer",
+                        "Filial: Zavod", "Keldi")
+        sent = await self.check_out(7301, ZAVOD_POINT)
+        self.assertSent(self.sent_to(sent, ZAVOD_GROUP), "Lavozim: Menejer", "Ketdi")
+
+        await self.query("UPDATE attendance SET check_out_time = NULL, checkout_requested_at = '2026-01-01 10:00:00'")
+        start = len(self.log)
+        await auto_close._check_and_close(self.bot)
+        self.assertSent(self.sent_to(self.log[start:], ZAVOD_GROUP), "Avtomatik yopildi", "Lavozim: Menejer")
+
+    async def test_an_employee_without_a_position_gets_no_position_line(self):
+        await self.make_employee(7302, "Zavod Xodim", "Ishlab chiqarish")
+        await self.send(7302, text="/start")
+        sent = self.sent_to(await self.check_in(7302, ZAVOD_POINT), ZAVOD_GROUP)
+        self.assertSent(sent, "Bo'lim: Ishlab chiqarish", "Filial: Zavod")
+        self.assertNotSent(sent, "Lavozim")

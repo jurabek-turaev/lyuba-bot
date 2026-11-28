@@ -1,17 +1,17 @@
 from aiogram import Router
 
-from .menu import router as menu_router
-from .shift import router as shift_router
+from .admin import router as admin_router
+from .application import router as application_router
+from .attendance import router as attendance_router
 from .catalog import router as catalog_router
 from .groups import router as groups_router
 from .interview import router as interview_router
-from .resume import router as resume_router
-from .application import router as application_router
-from .start import router as start_router
 from .location import router as location_router
-from .attendance import router as attendance_router
-from .admin import router as admin_router
+from .menu import router as menu_router
 from .middlewares import AccessMiddleware
+from .resume import router as resume_router
+from .shift import router as shift_router
+from .start import router as start_router
 
 router = Router()
 

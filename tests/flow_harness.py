@@ -13,10 +13,28 @@ from datetime import datetime
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import (
-    AnswerCallbackQuery, DeleteMessage, EditMessageCaption, EditMessageReplyMarkup, EditMessageText, GetChat,
-    SendChatAction, SendDocument, SendLocation, SendMessage, SendPhoto, SendVideoNote,
+    AnswerCallbackQuery,
+    DeleteMessage,
+    EditMessageCaption,
+    EditMessageReplyMarkup,
+    EditMessageText,
+    GetChat,
+    SendChatAction,
+    SendDocument,
+    SendLocation,
+    SendMessage,
+    SendPhoto,
+    SendVideoNote,
 )
-from aiogram.types import BufferedInputFile, Chat, ChatFullInfo, Document, Message, PhotoSize, Update
+from aiogram.types import (
+    BufferedInputFile,
+    Chat,
+    ChatFullInfo,
+    Document,
+    Message,
+    PhotoSize,
+    Update,
+)
 
 import config
 import database as db

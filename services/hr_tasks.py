@@ -20,8 +20,8 @@ from html import escape
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 
-from config import OWNER_ID
 import database as db
+from config import OWNER_ID
 from services import hr_format, hr_messages
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,9 @@ async def send_reminders(bot: Bot, now: datetime | None = None):
 
 
 async def ask_results(bot: Bot, now: datetime | None = None):
-    from handlers.application import card_keyboard  # handlers import services, not the other way round
+    from handlers.application import (
+        card_keyboard,  # handlers import services, not the other way round
+    )
 
     now = now or datetime.now()
     for app in await db.get_interviews_without_result((now - RESULT_DELAY).strftime(MINUTE_FORMAT)):
