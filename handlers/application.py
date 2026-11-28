@@ -28,8 +28,8 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from config import OWNER_ID
 import database as db
+from config import OWNER_ID
 from services import hr_format, hr_messages
 
 logger = logging.getLogger(__name__)

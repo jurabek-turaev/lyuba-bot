@@ -40,22 +40,25 @@ async def _send_text(bot: Bot, group_id: int | None, branch: str, text: str, wha
     )
 
 
-def _who(name: str, department: str | None, branch: str) -> str:
+def _who(name: str, department: str | None, branch: str, position: str | None = None) -> str:
     """
-    Employee, department and location lines. Several departments can share one
-    location (Ishlab chiqarish, Haydovchi, I.T.R all work at Zavod), so the
-    location alone does not tell who the employee is.
+    Employee, department, position and location lines. Several departments can share
+    one location (Ishlab chiqarish and Rahbariyat both work at Zavod), so the
+    location alone does not tell who the employee is. An employee without a
+    position gets no position line.
     """
     lines = f"👤 Xodim: {name}\n"
     if department and department != branch:
         lines += f"👥 Bo'lim: {department}\n"
+    if position:
+        lines += f"💼 Lavozim: {position}\n"
     return lines + f"🏢 Filial: {branch}\n"
 
 
 async def send_check_in(bot: Bot, group_id: int | None, name: str, branch: str, distance: int, time_str: str,
-                        department: str | None = None):
+                        department: str | None = None, position: str | None = None):
     text = (
-        _who(name, department, branch) +
+        _who(name, department, branch, position) +
         f"📍 Holat: Keldi\n"
         f"📏 Masofa: {distance} metr\n"
         f"🕒 Vaqt: {time_str}"
@@ -64,9 +67,10 @@ async def send_check_in(bot: Bot, group_id: int | None, name: str, branch: str, 
 
 
 async def send_check_out(bot: Bot, group_id: int | None, name: str, branch: str, distance: int,
-                         time_str: str, hours: float, department: str | None = None):
+                         time_str: str, hours: float, department: str | None = None,
+                         position: str | None = None):
     text = (
-        _who(name, department, branch) +
+        _who(name, department, branch, position) +
         f"📍 Holat: Ketdi\n"
         f"📏 Masofa: {distance} metr\n"
         f"🕒 Vaqt: {time_str}\n"
@@ -76,10 +80,10 @@ async def send_check_out(bot: Bot, group_id: int | None, name: str, branch: str,
 
 
 async def send_auto_close(bot: Bot, group_id: int | None, name: str, branch: str, time_str: str, hours: float,
-                          department: str | None = None):
+                          department: str | None = None, position: str | None = None):
     text = (
         f"⚠️ Avtomatik yopildi\n"
-        + _who(name, department, branch) +
+        + _who(name, department, branch, position) +
         f"📍 Holat: Ketdim bosilmadi — maksimal smena vaqti tugagani uchun tizim tomonidan yopildi\n"
         f"🕒 Yopilgan vaqt: {time_str}\n"
         f"⏱ Hisoblangan vaqt: {hours:g} soat"

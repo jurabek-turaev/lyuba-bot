@@ -51,7 +51,9 @@ def main() -> None:
     # Pinned version (requirements-rendercv.txt): these are RenderCV's internal modules
     from rendercv.renderer.pdf_png import generate_pdf
     from rendercv.renderer.typst import generate_typst
-    from rendercv.schema.rendercv_model_builder import build_rendercv_model_from_commented_map
+    from rendercv.schema.rendercv_model_builder import (
+        build_rendercv_model_from_commented_map,
+    )
 
     model = build_rendercv_model_from_commented_map(data, input_file_path=work_dir / "cv.yaml")
     pdf_path = generate_pdf(model, generate_typst(model))

@@ -329,16 +329,17 @@ async def get_attendance_times(attendance_id: int):
 async def get_all_open_attendance():
     """
     Hali 'Ketdim' bosilmagan barcha yozuvlarni qaytaradi — auto-close tekshiruvi uchun.
-    The last columns are the group of the record's location (None when it has no group)
-    and the employee's department.
+    The last columns are the group of the record's location (None when it has no group),
+    the employee's department and position name (None when not set).
     """
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """SELECT a.id, a.user_id, a.full_name, a.branch, a.work_date, a.check_in_time,
-                      a.checkout_requested_at, l.group_id, e.department
+                      a.checkout_requested_at, l.group_id, e.department, p.name
                FROM attendance a
                LEFT JOIN locations l ON l.id = a.location_id
                LEFT JOIN employees e ON e.user_id = a.user_id
+               LEFT JOIN positions p ON p.id = e.position_id
                WHERE a.check_out_time IS NULL"""
         )
         return await cursor.fetchall()
@@ -1234,8 +1235,12 @@ async def _seed_catalog(db):
     - nothing set (new install) -> the catalog stays empty, the admin fills it in the bot.
     """
     # Imported here so database.py has no module-level dependency on config
-    from config import (LEGACY_GROUP_ID, LEGACY_PRODUCTION_GROUP_ID,
-                        LEGACY_PRODUCTION_LAT, LEGACY_PRODUCTION_LON)
+    from config import (
+        LEGACY_GROUP_ID,
+        LEGACY_PRODUCTION_GROUP_ID,
+        LEGACY_PRODUCTION_LAT,
+        LEGACY_PRODUCTION_LON,
+    )
 
     now = _now_str()
 

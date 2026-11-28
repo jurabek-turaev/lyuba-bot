@@ -27,14 +27,19 @@ import logging
 from html import escape
 
 from aiogram import Bot, F, Router, types
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+)
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
-from config import OWNER_ID
 import database as db
+from config import OWNER_ID
 from services import geo_parse, gps
+
 from .states import CatalogState
 
 logger = logging.getLogger(__name__)

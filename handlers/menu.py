@@ -26,9 +26,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import OWNER_ID
 import database as db
+from config import OWNER_ID
 from services import placement
+
 from . import admin, application, catalog, shift
 
 router = Router()

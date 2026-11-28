@@ -41,6 +41,7 @@ from aiogram.types import (
 import database as db
 from services import hr_format
 from services.resume_pdf import ResumeRenderError, render_resume_pdf
+
 from .application import (
     PENDING_TEXT,
     Unapproved,

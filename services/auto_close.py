@@ -4,9 +4,9 @@ from datetime import datetime, timedelta
 
 from aiogram import Bot
 
-from config import MAX_SHIFT_HOURS
 import database as db
-from services import worktime, telegram_group
+from config import MAX_SHIFT_HOURS
+from services import telegram_group, worktime
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ async def _check_and_close(bot: Bot):
 
     for record in open_records:
         (attendance_id, user_id, full_name, branch, work_date,
-         check_in_time_str, checkout_requested_at_str, group_id, department) = record
+         check_in_time_str, checkout_requested_at_str, group_id, department, position) = record
 
         check_in_dt = datetime.strptime(check_in_time_str, "%Y-%m-%d %H:%M:%S")
 
@@ -66,7 +66,7 @@ async def _check_and_close(bot: Bot):
         # employee notification or the remaining records of this check
         try:
             await telegram_group.send_auto_close(bot, group_id, full_name, branch, check_out_time_str, hours,
-                                                 department)
+                                                 department, position)
         except Exception:
             logger.exception("[auto_close] guruhga xabar yuborib bo'lmadi (branch=%s)", branch)
 
